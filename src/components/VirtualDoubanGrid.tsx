@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 
 const Grid = dynamic(
@@ -51,17 +51,23 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
   // 渐进式加载状态
   const [visibleItemCount, setVisibleItemCount] = useState(INITIAL_BATCH_SIZE);
 
-  // 实际显示的项目数量（考虑渐进式加载）
-  const displayItemCount = Math.min(visibleItemCount, doubanData.length);
-  const displayData = doubanData.slice(0, displayItemCount);
+  // 使用 useMemo 缓存计算结果，减少重新渲染
+  const { displayItemCount, displayData, hasNextPage } = useMemo(() => {
+    const itemCount = Math.min(visibleItemCount, doubanData.length);
+    const data = doubanData.slice(0, itemCount);
+    const hasNext = itemCount < doubanData.length || hasMore;
+    
+    return {
+      displayItemCount: itemCount,
+      displayData: data,
+      hasNextPage: hasNext
+    };
+  }, [visibleItemCount, doubanData, hasMore]);
 
   // 重置可见项目数量（当数据变化时）
   useEffect(() => {
     setVisibleItemCount(INITIAL_BATCH_SIZE);
   }, [doubanData]);
-
-  // 检查是否还有更多项目可以加载
-  const hasNextPage = displayItemCount < doubanData.length || hasMore;
 
   // 加载更多项目
   const loadMoreItems = useCallback(() => {
@@ -78,8 +84,10 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     }
   }, [isLoadingMore, displayItemCount, doubanData.length, hasMore, onLoadMore]);
 
-  // 网格行数计算
-  const rowCount = Math.ceil(displayItemCount / columnCount);
+  // 网格行数计算 - 使用 useMemo 缓存
+  const rowCount = useMemo(() => {
+    return Math.max(1, Math.ceil(displayItemCount / columnCount));
+  }, [displayItemCount, columnCount]);
 
   // 渲染单个网格项
   const CellComponent = useCallback(({ 
@@ -105,7 +113,14 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     }
 
     return (
-      <div style={{ ...style, padding: '8px' }}>
+      <div 
+        style={{ 
+          ...style, 
+          padding: '8px',
+          contain: 'layout style',  // 单个cell的containment
+          backfaceVisibility: 'hidden', // 减少重绘
+        }}
+      >
         <VideoCard
           id={item.id}
           title={item.title}
@@ -127,7 +142,14 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
   );
 
   return (
-    <div ref={containerRef} className='w-full'>
+    <div 
+      ref={containerRef} 
+      className='w-full'
+      style={{
+        contain: 'layout style paint',  // CSS containment 优化
+        willChange: 'auto'              // 优化GPU加速
+      }}
+    >
       {doubanData.length === 0 ? (
         <div className='flex justify-center items-center h-40'>
           {loading ? (
@@ -147,27 +169,28 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
         </div>
       ) : (
         <Grid
-          key={`douban-grid-${containerWidth}-${columnCount}`}
+          key={`douban-grid-${containerWidth}-${columnCount}-${type}`}
           cellComponent={CellComponent}
-          cellProps={{
+          cellProps={useMemo(() => ({
             displayData,
             type,
             columnCount,
             displayItemCount,
-          }}
+          }), [displayData, type, columnCount, displayItemCount])}
           columnCount={columnCount}
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}
           defaultWidth={containerWidth}
           rowCount={rowCount}
           rowHeight={itemHeight + 16}
-          overscanCount={1}
-          style={{
-            overflowX: 'hidden',
-            overflowY: 'auto',
-            isolation: 'auto',
-          }}
-          onCellsRendered={({ rowStartIndex, rowStopIndex }) => {
+          overscanCount={2}
+          style={useMemo(() => ({
+            overflowX: 'hidden' as const,
+            overflowY: 'auto' as const,
+            isolation: 'auto' as const,
+            transition: 'none', // 禁用过渡动画减少闪烁
+          }), [])}
+          onCellsRendered={useCallback(({ rowStartIndex, rowStopIndex }: any) => {
             const visibleStopIndex = rowStopIndex;
             
             // 添加防抖机制，避免频繁触发
@@ -186,7 +209,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
                 }
               }, 100);
             }
-          }}
+          }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems])}
         />
       )}
       

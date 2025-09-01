@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 
 const Grid = dynamic(
@@ -63,13 +63,22 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
   const [visibleItemCount, setVisibleItemCount] = useState(INITIAL_BATCH_SIZE);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  // 选择当前显示的数据
-  const currentData = viewMode === 'agg' ? filteredAggResults : filteredResults;
-  const totalItemCount = currentData.length;
-
-  // 实际显示的项目数量（考虑渐进式加载）
-  const displayItemCount = Math.min(visibleItemCount, totalItemCount);
-  const displayData = currentData.slice(0, displayItemCount);
+  // 使用 useMemo 缓存数据计算
+  const { currentData, totalItemCount, displayItemCount, displayData, hasNextPage } = useMemo(() => {
+    const data = viewMode === 'agg' ? filteredAggResults : filteredResults;
+    const total = data.length;
+    const itemCount = Math.min(visibleItemCount, total);
+    const slicedData = data.slice(0, itemCount);
+    const hasNext = itemCount < total;
+    
+    return {
+      currentData: data,
+      totalItemCount: total,
+      displayItemCount: itemCount,
+      displayData: slicedData,
+      hasNextPage: hasNext
+    };
+  }, [viewMode, filteredAggResults, filteredResults, visibleItemCount]);
 
   // 重置可见项目数量（当搜索或过滤变化时）
   useEffect(() => {
@@ -96,9 +105,6 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     checkContainer();
   }, [containerWidth]);
 
-  // 检查是否还有更多项目可以加载
-  const hasNextPage = displayItemCount < totalItemCount;
-
   // 加载更多项目
   const loadMoreItems = useCallback(() => {
     if (isLoadingMore || !hasNextPage) return;
@@ -112,8 +118,10 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     }, 100);
   }, [isLoadingMore, hasNextPage, totalItemCount]);
 
-  // 网格行数计算
-  const rowCount = Math.ceil(displayItemCount / columnCount);
+  // 网格行数计算 - 使用 useMemo 缓存
+  const rowCount = useMemo(() => {
+    return Math.max(1, Math.ceil(displayItemCount / columnCount));
+  }, [displayItemCount, columnCount]);
 
   // 渲染单个网格项 - react-window 2.0.0 新API格式
   const CellComponent = useCallback(({ 
@@ -157,7 +165,14 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
       }
 
       return (
-        <div style={{ ...style, padding: '8px' }}>
+        <div 
+          style={{ 
+            ...style, 
+            padding: '8px',
+            contain: 'layout style', // CSS containment 优化
+            backfaceVisibility: 'hidden', // 减少重绘
+          }}
+        >
           <VideoCard
             ref={cellGetGroupRef(mapKey)}
             from='search'
@@ -176,7 +191,14 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     } else {
       const searchItem = item as SearchResult;
       return (
-        <div style={{ ...style, padding: '8px' }}>
+        <div 
+          style={{ 
+            ...style, 
+            padding: '8px',
+            contain: 'layout style', // CSS containment 优化
+            backfaceVisibility: 'hidden', // 减少重绘
+          }}
+        >
           <VideoCard
             id={searchItem.id}
             title={searchItem.title}
@@ -202,7 +224,14 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
   );
 
   return (
-    <div ref={containerRef} className='w-full'>
+    <div 
+      ref={containerRef} 
+      className='w-full'
+      style={{
+        contain: 'layout style paint', // CSS containment 优化
+        willChange: 'auto' // 优化GPU加速
+      }}
+    >
       {totalItemCount === 0 ? (
         <div className='flex justify-center items-center h-40'>
           {isLoading ? (
@@ -222,9 +251,9 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
         </div>
       ) : (
         <Grid
-          key={`grid-${containerWidth}-${columnCount}`}
+          key={`search-grid-${containerWidth}-${columnCount}-${viewMode}`}
           cellComponent={CellComponent}
-          cellProps={{
+          cellProps={useMemo(() => ({
             displayData,
             viewMode,
             searchQuery,
@@ -233,27 +262,39 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
             groupStatsRef,
             getGroupRef,
             computeGroupStats,
-          }}
+          }), [displayData, viewMode, searchQuery, columnCount, displayItemCount, groupStatsRef, getGroupRef, computeGroupStats])}
           columnCount={columnCount}
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}
           defaultWidth={containerWidth}
           rowCount={rowCount}
           rowHeight={itemHeight + 16}
-          overscanCount={1}
-          style={{
-            overflowX: 'hidden',
-            overflowY: 'auto',
-            // 确保不创建新的stacking context，让菜单能正确显示在最顶层
-            isolation: 'auto',
-          }}
-          onCellsRendered={({ rowStartIndex, rowStopIndex }) => {
+          overscanCount={2}
+          style={useMemo(() => ({
+            overflowX: 'hidden' as const,
+            overflowY: 'auto' as const,
+            isolation: 'auto' as const,
+            transition: 'none', // 禁用过渡动画减少闪烁
+          }), [])}
+          onCellsRendered={useCallback(({ rowStartIndex, rowStopIndex }: any) => {
             const visibleStopIndex = rowStopIndex;
             
             if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
-              loadMoreItems();
+              // 添加防抖机制
+              setTimeout(() => {
+                if (!isLoadingMore && hasNextPage) {
+                  console.log('VirtualSearchGrid: onCellsRendered trigger loadMore', { 
+                    visibleStopIndex, 
+                    rowCount, 
+                    threshold: LOAD_MORE_THRESHOLD,
+                    hasNextPage,
+                    isLoadingMore 
+                  });
+                  loadMoreItems();
+                }
+              }, 100);
             }
-          }}
+          }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems])}
         />
       )}
       
