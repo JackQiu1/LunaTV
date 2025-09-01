@@ -18,7 +18,9 @@ const Grid = dynamic(
 
 interface VirtualSearchGridProps {
   // 搜索结果数据
+  allResults: SearchResult[];
   filteredResults: SearchResult[];
+  aggregatedResults: [string, SearchResult[]][];
   filteredAggResults: [string, SearchResult[]][];
   
   // 视图模式
@@ -29,6 +31,7 @@ interface VirtualSearchGridProps {
   isLoading: boolean;
   
   // VideoCard相关props
+  groupRefs: React.MutableRefObject<Map<string, React.RefObject<any>>>;
   groupStatsRef: React.MutableRefObject<Map<string, any>>;
   getGroupRef: (key: string) => React.RefObject<any>;
   computeGroupStats: (group: SearchResult[]) => any;
@@ -40,11 +43,14 @@ const LOAD_MORE_BATCH_SIZE = 8;
 const LOAD_MORE_THRESHOLD = 5; // 距离底部还有5行时开始加载
 
 export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
+  allResults,
   filteredResults,
+  aggregatedResults,
   filteredAggResults,
   viewMode,
   searchQuery,
   isLoading,
+  groupRefs,
   groupStatsRef,
   getGroupRef,
   computeGroupStats,
