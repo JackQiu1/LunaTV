@@ -83,31 +83,29 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     }
   }, [isLoadingMore, displayItemCount, doubanData.length, hasMore, onLoadMore]);
 
-  // 网格行数计算 - 动态但稳定的策略
+  // 网格行数计算 - 恢复到正确的计算方式
   const rowCount = useMemo(() => {
-    // 基于当前数据量计算，但添加一些缓冲行避免频繁变化
-    const actualRows = Math.ceil(displayItemCount / columnCount);
-    const bufferRows = Math.ceil(50 / columnCount); // 添加缓冲行
-    return Math.max(1, actualRows + bufferRows);
+    return Math.max(1, Math.ceil(displayItemCount / columnCount));
   }, [displayItemCount, columnCount]);
 
-  // 渲染单个网格项 - 使用稳定的ref数据
+  // 渲染单个网格项 - 恢复正确的props传递
   const CellComponent = useCallback(({ 
     columnIndex, 
     rowIndex, 
     style,
-    getCellData,
+    displayData: cellDisplayData,
+    type: cellType,
+    columnCount: cellColumnCount,
+    displayItemCount: cellDisplayItemCount,
   }: any) => {
-    // 从ref获取最新数据
-    const { displayData, type, columnCount, displayItemCount } = getCellData();
-    const index = rowIndex * columnCount + columnIndex;
+    const index = rowIndex * cellColumnCount + columnIndex;
     
     // 如果超出显示范围，返回空
-    if (index >= displayItemCount) {
+    if (index >= cellDisplayItemCount) {
       return <div style={style} />;
     }
 
-    const item = displayData[index];
+    const item = cellDisplayData[index];
     
     if (!item) {
       return <div style={style} />;
@@ -129,7 +127,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
           year={item.year || ''}
           douban_id={item.id}
           from='douban'
-          type={type === 'movie' ? 'movie' : 'tv'}
+          type={cellType === 'movie' ? 'movie' : 'tv'}
           rate={item.rate}
         />
       </div>
@@ -142,28 +140,13 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     800
   );
 
-  // 使用 ref 传递动态数据，让 cellProps 完全稳定
-  const cellDataRef = useRef({
+  // cellProps优化 - 基于react-window源码的useMemoizedObject原理
+  const cellProps = useMemo(() => ({
     displayData,
     type,
     columnCount,
     displayItemCount,
-  });
-
-  // 更新 ref 数据但不触发重新渲染
-  useEffect(() => {
-    cellDataRef.current = {
-      displayData,
-      type,
-      columnCount,
-      displayItemCount,
-    };
-  });
-
-  // 完全稳定的 cellProps - 永不变化
-  const stableCellProps = useMemo(() => ({
-    getCellData: () => cellDataRef.current,
-  }), []); // 空依赖，永远稳定
+  }), [displayData, type, columnCount, displayItemCount]);
 
   const memoizedStyle = useMemo(() => ({
     overflowX: 'hidden' as const,
@@ -175,7 +158,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     backfaceVisibility: 'hidden' as const,
   }), []);
 
-  // 防抖的加载更多回调 - 简化逻辑
+  // 防抖的加载更多回调 - 恢复简单正确的逻辑
   const debounceRef = useRef<NodeJS.Timeout>();
   const memoizedOnCellsRendered = useCallback(({ rowStopIndex }: any) => {
     // 清除之前的防抖
@@ -183,11 +166,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
       clearTimeout(debounceRef.current);
     }
     
-    // 计算实际数据的行数
-    const actualRowCount = Math.ceil(displayItemCount / columnCount);
-    
-    // 判断是否接近底部，需要加载更多
-    if (rowStopIndex >= actualRowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
+    if (rowStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
       // 使用防抖避免频繁触发
       debounceRef.current = setTimeout(() => {
         if (!isLoadingMore && hasNextPage) {
@@ -195,7 +174,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
         }
       }, 150);
     }
-  }, [columnCount, displayItemCount, hasNextPage, isLoadingMore, loadMoreItems]);
+  }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems]);
 
   return (
     <div 
@@ -227,7 +206,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
         <Grid
           key={`douban-grid-${Math.floor(containerWidth / 100)}-${columnCount}`}
           cellComponent={CellComponent}
-          cellProps={stableCellProps}
+          cellProps={cellProps}
           columnCount={columnCount}
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}

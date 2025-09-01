@@ -107,12 +107,9 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     }, 100);
   }, [isLoadingMore, hasNextPage, totalItemCount]);
 
-  // 网格行数计算 - 动态但稳定的策略
+  // 网格行数计算 - 恢复正确的计算方式
   const rowCount = useMemo(() => {
-    // 基于当前数据量计算，但添加一些缓冲行避免频繁变化
-    const actualRows = Math.ceil(displayItemCount / columnCount);
-    const bufferRows = Math.ceil(30 / columnCount); // 添加缓冲行
-    return Math.max(1, actualRows + bufferRows);
+    return Math.max(1, Math.ceil(displayItemCount / columnCount));
   }, [displayItemCount, columnCount]);
 
   // 渲染单个网格项 - 使用稳定的ref数据
@@ -271,11 +268,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
       clearTimeout(debounceRef.current);
     }
     
-    // 计算实际数据的行数
-    const actualRowCount = Math.ceil(displayItemCount / columnCount);
-    
-    // 判断是否接近底部，需要加载更多
-    if (rowStopIndex >= actualRowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
+    if (rowStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
       // 使用防抖避免频繁触发
       debounceRef.current = setTimeout(() => {
         if (!isLoadingMore && hasNextPage) {
@@ -283,7 +276,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
         }
       }, 150);
     }
-  }, [columnCount, displayItemCount, hasNextPage, isLoadingMore, loadMoreItems]);
+  }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems]);
 
   return (
     <div 
