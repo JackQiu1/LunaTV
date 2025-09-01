@@ -112,45 +112,50 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     return Math.max(1, Math.ceil(displayItemCount / columnCount));
   }, [displayItemCount, columnCount]);
 
-  // 渲染单个网格项 - react-window 2.0.0 新API格式
+  // 渲染单个网格项 - 使用稳定的ref数据
   const CellComponent = useCallback(({ 
     columnIndex, 
     rowIndex, 
     style,
-    displayData: cellDisplayData,
-    viewMode: cellViewMode,
-    searchQuery: cellSearchQuery,
-    columnCount: cellColumnCount,
-    displayItemCount: cellDisplayItemCount,
-    groupStatsRef: cellGroupStatsRef,
-    getGroupRef: cellGetGroupRef,
-    computeGroupStats: cellComputeGroupStats,
+    getCellData,
   }: any) => {
-    const index = rowIndex * cellColumnCount + columnIndex;
+    // 从ref获取最新数据
+    const { 
+      displayData, 
+      viewMode, 
+      searchQuery, 
+      columnCount, 
+      displayItemCount,
+      groupStatsRef,
+      getGroupRef,
+      computeGroupStats 
+    } = getCellData();
+    
+    const index = rowIndex * columnCount + columnIndex;
     
     // 如果超出显示范围，返回空
-    if (index >= cellDisplayItemCount) {
+    if (index >= displayItemCount) {
       return <div style={style} />;
     }
 
-    const item = cellDisplayData[index];
+    const item = displayData[index];
     
     if (!item) {
       return <div style={style} />;
     }
 
     // 根据视图模式渲染不同内容
-    if (cellViewMode === 'agg') {
+    if (viewMode === 'agg') {
       const [mapKey, group] = item as [string, SearchResult[]];
       const title = group[0]?.title || '';
       const poster = group[0]?.poster || '';
       const year = group[0]?.year || 'unknown';
-      const { episodes, source_names, douban_id } = cellComputeGroupStats(group);
+      const { episodes, source_names, douban_id } = computeGroupStats(group);
       const type = episodes === 1 ? 'movie' : 'tv';
 
       // 如果该聚合第一次出现，写入初始统计
-      if (!cellGroupStatsRef.current.has(mapKey)) {
-        cellGroupStatsRef.current.set(mapKey, { episodes, source_names, douban_id });
+      if (!groupStatsRef.current.has(mapKey)) {
+        groupStatsRef.current.set(mapKey, { episodes, source_names, douban_id });
       }
 
       return (
@@ -163,7 +168,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
           }}
         >
           <VideoCard
-            ref={cellGetGroupRef(mapKey)}
+            ref={getGroupRef(mapKey)}
             from='search'
             isAggregate={true}
             title={title}
@@ -172,7 +177,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
             episodes={episodes}
             source_names={source_names}
             douban_id={douban_id}
-            query={cellSearchQuery.trim() !== title ? cellSearchQuery.trim() : ''}
+            query={searchQuery.trim() !== title ? searchQuery.trim() : ''}
             type={type}
           />
         </div>
@@ -196,7 +201,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
             source={searchItem.source}
             source_name={searchItem.source_name}
             douban_id={searchItem.douban_id}
-            query={cellSearchQuery.trim() !== searchItem.title ? cellSearchQuery.trim() : ''}
+            query={searchQuery.trim() !== searchItem.title ? searchQuery.trim() : ''}
             year={searchItem.year}
             from='search'
             type={searchItem.episodes.length > 1 ? 'tv' : 'movie'}
@@ -212,8 +217,8 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     800
   );
 
-  // 稳定化 cellProps - 关键优化点
-  const memoizedCellProps = useMemo(() => ({
+  // 使用 ref 传递动态数据，让 cellProps 完全稳定
+  const cellDataRef = useRef({
     displayData,
     viewMode,
     searchQuery,
@@ -222,14 +227,26 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     groupStatsRef,
     getGroupRef,
     computeGroupStats,
-  }), [
-    displayData.length, // 使用 length 而不是整个数组
-    viewMode,
-    searchQuery,
-    columnCount,
-    displayItemCount,
-    // 注意：groupStatsRef、getGroupRef、computeGroupStats 应该是稳定的引用
-  ]);
+  });
+
+  // 更新 ref 数据但不触发重新渲染
+  useEffect(() => {
+    cellDataRef.current = {
+      displayData,
+      viewMode,
+      searchQuery,
+      columnCount,
+      displayItemCount,
+      groupStatsRef,
+      getGroupRef,
+      computeGroupStats,
+    };
+  });
+
+  // 完全稳定的 cellProps - 永不变化
+  const stableCellProps = useMemo(() => ({
+    getCellData: () => cellDataRef.current,
+  }), []); // 空依赖，永远稳定
 
   const memoizedStyle = useMemo(() => ({
     overflowX: 'hidden' as const,
@@ -293,7 +310,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
         <Grid
           key={`search-grid-${Math.floor(containerWidth / 100)}-${columnCount}-${viewMode}`}
           cellComponent={CellComponent}
-          cellProps={memoizedCellProps}
+          cellProps={stableCellProps}
           columnCount={columnCount}
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}

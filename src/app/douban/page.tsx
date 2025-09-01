@@ -106,9 +106,7 @@ function DoubanPageClient() {
 
   // 虚拟滑动加载更多处理 - 修复防抖和状态问题
   const handleVirtualLoadMore = useCallback(() => {
-    console.log('VirtualDoubanGrid: handleVirtualLoadMore called, isLoadingMore:', isLoadingMore, 'hasMore:', hasMore);
     if (isLoadingMore || !hasMore) {
-      console.log('VirtualDoubanGrid: Skipping load more - isLoadingMore:', isLoadingMore, 'hasMore:', hasMore);
       return;
     }
 
@@ -119,7 +117,6 @@ function DoubanPageClient() {
 
     // 设置防抖延时
     virtualLoadTimeoutRef.current = setTimeout(() => {
-      console.log('VirtualDoubanGrid: About to execute setCurrentPage');
       // 使用最新的状态值
       setCurrentPage((prevPage) => {
         console.log('VirtualDoubanGrid: Executing load more, currentPage:', prevPage, '-> next:', prevPage + 1);
@@ -229,6 +226,14 @@ function DoubanPageClient() {
   // 生成骨架屏数据
   const skeletonData = Array.from({ length: 25 }, (_, index) => index);
 
+  // 统一的状态重置函数
+  const resetPaginationState = useCallback(() => {
+    setCurrentPage(0);
+    setDoubanData([]);
+    setHasMore(true);
+    setIsLoadingMore(false);
+  }, []);
+
   // 参数快照比较函数 - 严格比较（用于初始数据加载）
   const isSnapshotEqual = useCallback(
     (
@@ -334,11 +339,8 @@ function DoubanPageClient() {
 
     try {
       setLoading(true);
-      // 确保在加载初始数据时重置页面状态
-      setDoubanData([]);
-      setCurrentPage(0);
-      setHasMore(true);
-      setIsLoadingMore(false);
+      // 使用统一的重置函数
+      resetPaginationState();
 
       let data: DoubanResult;
 
@@ -493,19 +495,10 @@ function DoubanPageClient() {
 
   // 单独处理 currentPage 变化（加载更多）
   useEffect(() => {
-    console.log('useEffect[currentPage]: currentPage changed to:', currentPage);
     if (currentPage > 0) {
-      console.log('useEffect[currentPage]: Starting fetchMoreData for page:', currentPage);
       const fetchMoreData = async () => {
-        // 创建当前参数的快照
-        const requestSnapshot = {
-          type,
-          primarySelection,
-          secondarySelection,
-          multiLevelSelection: multiLevelValues,
-          selectedWeekday,
-          currentPage,
-        };
+        // 直接使用当前ref中的参数，避免快照比较
+        const currentParams = currentParamsRef.current;
 
         try {
           setIsLoadingMore(true);
@@ -543,45 +536,45 @@ function DoubanPageClient() {
               pageStart: currentPage * 25,
               category: '动画',
               format: primarySelection === '番剧' ? '电视剧' : '',
-              region: multiLevelValues.region
-                ? (multiLevelValues.region as string)
+              region: currentParams.multiLevelSelection.region
+                ? (currentParams.multiLevelSelection.region as string)
                 : '',
-              year: multiLevelValues.year
-                ? (multiLevelValues.year as string)
+              year: currentParams.multiLevelSelection.year
+                ? (currentParams.multiLevelSelection.year as string)
                 : '',
-              platform: multiLevelValues.platform
-                ? (multiLevelValues.platform as string)
+              platform: currentParams.multiLevelSelection.platform
+                ? (currentParams.multiLevelSelection.platform as string)
                 : '',
-              sort: multiLevelValues.sort
-                ? (multiLevelValues.sort as string)
+              sort: currentParams.multiLevelSelection.sort
+                ? (currentParams.multiLevelSelection.sort as string)
                 : '',
-              label: multiLevelValues.label
-                ? (multiLevelValues.label as string)
+              label: currentParams.multiLevelSelection.label
+                ? (currentParams.multiLevelSelection.label as string)
                 : '',
             });
-          } else if (primarySelection === '全部') {
+          } else if (currentParams.primarySelection === '全部') {
             data = await getDoubanRecommends({
-              kind: type === 'show' ? 'tv' : (type as 'tv' | 'movie'),
+              kind: currentParams.type === 'show' ? 'tv' : (currentParams.type as 'tv' | 'movie'),
               pageLimit: 25,
               pageStart: currentPage * 25,
-              category: multiLevelValues.type
-                ? (multiLevelValues.type as string)
+              category: currentParams.multiLevelSelection.type
+                ? (currentParams.multiLevelSelection.type as string)
                 : '',
-              format: type === 'show' ? '综艺' : type === 'tv' ? '电视剧' : '',
-              region: multiLevelValues.region
-                ? (multiLevelValues.region as string)
+              format: currentParams.type === 'show' ? '综艺' : currentParams.type === 'tv' ? '电视剧' : '',
+              region: currentParams.multiLevelSelection.region
+                ? (currentParams.multiLevelSelection.region as string)
                 : '',
-              year: multiLevelValues.year
-                ? (multiLevelValues.year as string)
+              year: currentParams.multiLevelSelection.year
+                ? (currentParams.multiLevelSelection.year as string)
                 : '',
-              platform: multiLevelValues.platform
-                ? (multiLevelValues.platform as string)
+              platform: currentParams.multiLevelSelection.platform
+                ? (currentParams.multiLevelSelection.platform as string)
                 : '',
-              sort: multiLevelValues.sort
-                ? (multiLevelValues.sort as string)
+              sort: currentParams.multiLevelSelection.sort
+                ? (currentParams.multiLevelSelection.sort as string)
                 : '',
-              label: multiLevelValues.label
-                ? (multiLevelValues.label as string)
+              label: currentParams.multiLevelSelection.label
+                ? (currentParams.multiLevelSelection.label as string)
                 : '',
             });
           } else {
@@ -591,24 +584,14 @@ function DoubanPageClient() {
           }
 
           if (data.code === 200) {
-            // 对于加载更多操作，只检查核心参数，允许 currentPage 不同
-            const currentSnapshot = { ...currentParamsRef.current };
-            const coreParamsMatch = isSnapshotEqualIgnorePage(
-              requestSnapshot,
-              currentSnapshot
-            );
-
-            if (coreParamsMatch) {
-              setDoubanData((prev) => [...prev, ...data.list]);
-              setHasMore(data.list.length !== 0);
-            } else {
-              console.log('核心参数不一致，不执行任何操作，避免设置过期数据');
-            }
+            // 简化验证：只要请求成功就累积数据，不做参数快照比较
+            setDoubanData((prev) => [...prev, ...data.list]);
+            setHasMore(data.list.length !== 0);
           } else {
             throw new Error(data.message || '获取数据失败');
           }
         } catch (err) {
-          console.error(err);
+          console.error('Load more error:', err);
         } finally {
           setIsLoadingMore(false);
         }
@@ -616,15 +599,7 @@ function DoubanPageClient() {
 
       fetchMoreData();
     }
-  }, [
-    currentPage,
-    type,
-    primarySelection,
-    secondarySelection,
-    customCategories,
-    multiLevelValues,
-    selectedWeekday,
-  ]);
+  }, [currentPage]); // 只监听 currentPage 变化，避免竞态条件
 
   // 设置滚动监听（仅在非虚拟化模式下使用）
   useEffect(() => {
@@ -668,10 +643,8 @@ function DoubanPageClient() {
       // 只有当值真正改变时才设置loading状态
       if (value !== primarySelection) {
         setLoading(true);
-        // 立即重置页面状态，防止基于旧状态的请求
-        setCurrentPage(0);
-        setDoubanData([]);
-        setHasMore(true);
+        // 使用统一的重置函数
+        resetPaginationState();
         setIsLoadingMore(false);
 
         // 清空 MultiLevelSelector 状态
@@ -719,10 +692,8 @@ function DoubanPageClient() {
       // 只有当值真正改变时才设置loading状态
       if (value !== secondarySelection) {
         setLoading(true);
-        // 立即重置页面状态，防止基于旧状态的请求
-        setCurrentPage(0);
-        setDoubanData([]);
-        setHasMore(true);
+        // 使用统一的重置函数
+        resetPaginationState();
         setIsLoadingMore(false);
         setSecondarySelection(value);
       }
@@ -751,10 +722,8 @@ function DoubanPageClient() {
       }
 
       setLoading(true);
-      // 立即重置页面状态，防止基于旧状态的请求
-      setCurrentPage(0);
-      setDoubanData([]);
-      setHasMore(true);
+      // 使用统一的重置函数
+      resetPaginationState();
       setIsLoadingMore(false);
       setMultiLevelValues(values);
     },
