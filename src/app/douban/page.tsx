@@ -33,6 +33,7 @@ function DoubanPageClient() {
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadingRef = useRef<HTMLDivElement>(null);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const virtualLoadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 用于存储最新参数值的 refs
   const currentParamsRef = useRef({
@@ -102,6 +103,27 @@ function DoubanPageClient() {
     setUseVirtualization(newValue);
     localStorage.setItem('doubanUseVirtualization', newValue.toString());
   };
+
+  // 虚拟滑动加载更多处理 - 添加防抖
+  const handleVirtualLoadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) {
+      console.log('VirtualDoubanGrid: Skip load more', { isLoadingMore, hasMore });
+      return;
+    }
+
+    // 清除之前的延时器
+    if (virtualLoadTimeoutRef.current) {
+      clearTimeout(virtualLoadTimeoutRef.current);
+    }
+
+    // 设置防抖延时
+    virtualLoadTimeoutRef.current = setTimeout(() => {
+      if (!isLoadingMore && hasMore) {
+        console.log('VirtualDoubanGrid: Executing load more, currentPage:', currentPage);
+        setCurrentPage((prev) => prev + 1);
+      }
+    }, 200); // 200ms防抖
+  }, [isLoadingMore, hasMore, currentPage]);
 
   // 同步最新参数值到 ref
   useEffect(() => {
@@ -810,7 +832,7 @@ function DoubanPageClient() {
               loading={loading}
               isLoadingMore={isLoadingMore}
               hasMore={hasMore}
-              onLoadMore={() => setCurrentPage((prev) => prev + 1)}
+              onLoadMore={handleVirtualLoadMore}
               type={type as 'movie' | 'tv' | 'show' | 'anime'}
             />
           ) : (

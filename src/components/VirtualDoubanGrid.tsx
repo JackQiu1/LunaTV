@@ -71,8 +71,9 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     if (displayItemCount < doubanData.length) {
       setVisibleItemCount(prev => Math.min(prev + LOAD_MORE_BATCH_SIZE, doubanData.length));
     } 
-    // 如果本地数据显示完了，触发远程加载
-    else if (hasMore) {
+    // 如果本地数据显示完了，且还有远程数据，触发远程加载
+    else if (hasMore && !isLoadingMore) {
+      console.log('VirtualDoubanGrid: Triggering remote load more');
       onLoadMore();
     }
   }, [isLoadingMore, displayItemCount, doubanData.length, hasMore, onLoadMore]);
@@ -169,8 +170,21 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
           onCellsRendered={({ rowStartIndex, rowStopIndex }) => {
             const visibleStopIndex = rowStopIndex;
             
+            // 添加防抖机制，避免频繁触发
             if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
-              loadMoreItems();
+              // 使用 setTimeout 避免立即触发
+              setTimeout(() => {
+                if (!isLoadingMore && hasNextPage) {
+                  console.log('VirtualDoubanGrid: onCellsRendered trigger loadMore', { 
+                    visibleStopIndex, 
+                    rowCount, 
+                    threshold: LOAD_MORE_THRESHOLD,
+                    hasNextPage,
+                    isLoadingMore 
+                  });
+                  loadMoreItems();
+                }
+              }, 100);
             }
           }}
         />
