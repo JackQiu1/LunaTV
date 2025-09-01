@@ -140,32 +140,41 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     800
   );
 
-  // 将所有 hooks 移到组件顶层
+  // 稳定化 cellProps - 避免引用相等性问题导致重新渲染
   const memoizedCellProps = useMemo(() => ({
     displayData,
     type,
     columnCount,
     displayItemCount,
-  }), [displayData, type, columnCount, displayItemCount]);
+  }), [displayData.length, type, columnCount, displayItemCount]); // 注意：使用 length 而不是整个数组
 
   const memoizedStyle = useMemo(() => ({
     overflowX: 'hidden' as const,
     overflowY: 'auto' as const,
     isolation: 'auto' as const,
-    transition: 'none', // 禁用过渡动画减少闪烁
+    transition: 'none',
+    // 避免 GPU 层创建导致的闪烁
+    transform: 'translateZ(0)',
+    backfaceVisibility: 'hidden' as const,
   }), []);
 
+  // 防抖的加载更多回调
+  const debounceRef = useRef<NodeJS.Timeout>();
   const memoizedOnCellsRendered = useCallback(({ rowStopIndex }: any) => {
+    // 清除之前的防抖
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    
     const visibleStopIndex = rowStopIndex;
     
-    // 添加防抖机制，避免频繁触发
     if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
-      // 使用 setTimeout 避免立即触发
-      setTimeout(() => {
+      // 使用防抖避免频繁触发
+      debounceRef.current = setTimeout(() => {
         if (!isLoadingMore && hasNextPage) {
           loadMoreItems();
         }
-      }, 100);
+      }, 150); // 稍微增加防抖时间
     }
   }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems]);
 
@@ -197,7 +206,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
         </div>
       ) : (
         <Grid
-          key={`douban-grid-${containerWidth}-${columnCount}-${type}`}
+          key={`douban-grid-${Math.floor(containerWidth / 100)}-${columnCount}-${type}`}
           cellComponent={CellComponent}
           cellProps={memoizedCellProps}
           columnCount={columnCount}
@@ -206,7 +215,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
           defaultWidth={containerWidth}
           rowCount={rowCount}
           rowHeight={itemHeight + 16}
-          overscanCount={2}
+          overscanCount={3}
           style={memoizedStyle}
           onCellsRendered={memoizedOnCellsRendered}
         />

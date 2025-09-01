@@ -212,7 +212,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     800
   );
 
-  // 将所有 hooks 移到组件顶层
+  // 稳定化 cellProps - 关键优化点
   const memoizedCellProps = useMemo(() => ({
     displayData,
     viewMode,
@@ -222,25 +222,44 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     groupStatsRef,
     getGroupRef,
     computeGroupStats,
-  }), [displayData, viewMode, searchQuery, columnCount, displayItemCount, groupStatsRef, getGroupRef, computeGroupStats]);
+  }), [
+    displayData.length, // 使用 length 而不是整个数组
+    viewMode,
+    searchQuery,
+    columnCount,
+    displayItemCount,
+    // 注意：groupStatsRef、getGroupRef、computeGroupStats 应该是稳定的引用
+  ]);
 
   const memoizedStyle = useMemo(() => ({
     overflowX: 'hidden' as const,
     overflowY: 'auto' as const,
     isolation: 'auto' as const,
-    transition: 'none', // 禁用过渡动画减少闪烁
+    transition: 'none',
+    // 关键：避免 GPU 层创建导致的闪烁
+    transform: 'translateZ(0)',
+    backfaceVisibility: 'hidden' as const,
+    // 强制使用硬件加速，但避免创建新的层叠上下文
+    willChange: 'scroll-position',
   }), []);
 
+  // 防抖的加载更多回调
+  const debounceRef = useRef<NodeJS.Timeout>();
   const memoizedOnCellsRendered = useCallback(({ rowStopIndex }: any) => {
+    // 清除之前的防抖
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    
     const visibleStopIndex = rowStopIndex;
     
     if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
-      // 添加防抖机制
-      setTimeout(() => {
+      // 使用防抖避免频繁触发
+      debounceRef.current = setTimeout(() => {
         if (!isLoadingMore && hasNextPage) {
           loadMoreItems();
         }
-      }, 100);
+      }, 150);
     }
   }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems]);
 
@@ -272,7 +291,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
         </div>
       ) : (
         <Grid
-          key={`search-grid-${containerWidth}-${columnCount}-${viewMode}`}
+          key={`search-grid-${Math.floor(containerWidth / 100)}-${columnCount}-${viewMode}`}
           cellComponent={CellComponent}
           cellProps={memoizedCellProps}
           columnCount={columnCount}
@@ -281,7 +300,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
           defaultWidth={containerWidth}
           rowCount={rowCount}
           rowHeight={itemHeight + 16}
-          overscanCount={2}
+          overscanCount={3}
           style={memoizedStyle}
           onCellsRendered={memoizedOnCellsRendered}
         />
