@@ -4,6 +4,10 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 
+import { DoubanItem } from '@/lib/types';
+import { useResponsiveGrid } from '@/hooks/useResponsiveGrid';
+import VideoCard from '@/components/VideoCard';
+
 const Grid = dynamic(
   () => import('react-window').then(mod => ({ default: mod.Grid })),
   { 
@@ -11,10 +15,6 @@ const Grid = dynamic(
     loading: () => <div className="animate-pulse h-96 bg-gray-200 dark:bg-gray-800 rounded-lg" />
   }
 );
-
-import { DoubanItem } from '@/lib/types';
-import { useResponsiveGrid } from '@/hooks/useResponsiveGrid';
-import VideoCard from '@/components/VideoCard';
 
 interface VirtualDoubanGridProps {
   // 豆瓣数据
@@ -79,7 +79,6 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     } 
     // 如果本地数据显示完了，且还有远程数据，触发远程加载
     else if (hasMore && !isLoadingMore) {
-      console.log('VirtualDoubanGrid: Triggering remote load more');
       onLoadMore();
     }
   }, [isLoadingMore, displayItemCount, doubanData.length, hasMore, onLoadMore]);
@@ -141,6 +140,35 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     800
   );
 
+  // 将所有 hooks 移到组件顶层
+  const memoizedCellProps = useMemo(() => ({
+    displayData,
+    type,
+    columnCount,
+    displayItemCount,
+  }), [displayData, type, columnCount, displayItemCount]);
+
+  const memoizedStyle = useMemo(() => ({
+    overflowX: 'hidden' as const,
+    overflowY: 'auto' as const,
+    isolation: 'auto' as const,
+    transition: 'none', // 禁用过渡动画减少闪烁
+  }), []);
+
+  const memoizedOnCellsRendered = useCallback(({ rowStopIndex }: any) => {
+    const visibleStopIndex = rowStopIndex;
+    
+    // 添加防抖机制，避免频繁触发
+    if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
+      // 使用 setTimeout 避免立即触发
+      setTimeout(() => {
+        if (!isLoadingMore && hasNextPage) {
+          loadMoreItems();
+        }
+      }, 100);
+    }
+  }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems]);
+
   return (
     <div 
       ref={containerRef} 
@@ -171,12 +199,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
         <Grid
           key={`douban-grid-${containerWidth}-${columnCount}-${type}`}
           cellComponent={CellComponent}
-          cellProps={useMemo(() => ({
-            displayData,
-            type,
-            columnCount,
-            displayItemCount,
-          }), [displayData, type, columnCount, displayItemCount])}
+          cellProps={memoizedCellProps}
           columnCount={columnCount}
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}
@@ -184,32 +207,8 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
           rowCount={rowCount}
           rowHeight={itemHeight + 16}
           overscanCount={2}
-          style={useMemo(() => ({
-            overflowX: 'hidden' as const,
-            overflowY: 'auto' as const,
-            isolation: 'auto' as const,
-            transition: 'none', // 禁用过渡动画减少闪烁
-          }), [])}
-          onCellsRendered={useCallback(({ rowStartIndex, rowStopIndex }: any) => {
-            const visibleStopIndex = rowStopIndex;
-            
-            // 添加防抖机制，避免频繁触发
-            if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
-              // 使用 setTimeout 避免立即触发
-              setTimeout(() => {
-                if (!isLoadingMore && hasNextPage) {
-                  console.log('VirtualDoubanGrid: onCellsRendered trigger loadMore', { 
-                    visibleStopIndex, 
-                    rowCount, 
-                    threshold: LOAD_MORE_THRESHOLD,
-                    hasNextPage,
-                    isLoadingMore 
-                  });
-                  loadMoreItems();
-                }
-              }, 100);
-            }
-          }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems])}
+          style={memoizedStyle}
+          onCellsRendered={memoizedOnCellsRendered}
         />
       )}
       

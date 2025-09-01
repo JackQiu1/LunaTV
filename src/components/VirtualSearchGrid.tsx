@@ -4,6 +4,10 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 
+import { SearchResult } from '@/lib/types';
+import { useResponsiveGrid } from '@/hooks/useResponsiveGrid';
+import VideoCard from '@/components/VideoCard';
+
 const Grid = dynamic(
   () => import('react-window').then(mod => ({ default: mod.Grid })),
   { 
@@ -12,16 +16,9 @@ const Grid = dynamic(
   }
 );
 
-import { SearchResult } from '@/lib/types';
-import { useResponsiveGrid } from '@/hooks/useResponsiveGrid';
-
-import VideoCard from '@/components/VideoCard';
-
 interface VirtualSearchGridProps {
   // 搜索结果数据
-  allResults: SearchResult[];
   filteredResults: SearchResult[];
-  aggregatedResults: [string, SearchResult[]][];
   filteredAggResults: [string, SearchResult[]][];
   
   // 视图模式
@@ -32,7 +29,6 @@ interface VirtualSearchGridProps {
   isLoading: boolean;
   
   // VideoCard相关props
-  groupRefs: React.MutableRefObject<Map<string, React.RefObject<any>>>;
   groupStatsRef: React.MutableRefObject<Map<string, any>>;
   getGroupRef: (key: string) => React.RefObject<any>;
   computeGroupStats: (group: SearchResult[]) => any;
@@ -44,14 +40,11 @@ const LOAD_MORE_BATCH_SIZE = 8;
 const LOAD_MORE_THRESHOLD = 5; // 距离底部还有5行时开始加载
 
 export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
-  allResults,
   filteredResults,
-  aggregatedResults,
   filteredAggResults,
   viewMode,
   searchQuery,
   isLoading,
-  groupRefs,
   groupStatsRef,
   getGroupRef,
   computeGroupStats,
@@ -90,16 +83,6 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
   useEffect(() => {
     const checkContainer = () => {
       const element = containerRef.current;
-      const actualWidth = element?.offsetWidth || 0;
-      
-      console.log('VirtualSearchGrid container debug:', {
-        actualWidth,
-        containerWidth,
-        offsetWidth: element?.offsetWidth,
-        clientWidth: element?.clientWidth,
-        scrollWidth: element?.scrollWidth,
-        element: !!element
-      });
     };
     
     checkContainer();
@@ -223,6 +206,38 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     800
   );
 
+  // 将所有 hooks 移到组件顶层
+  const memoizedCellProps = useMemo(() => ({
+    displayData,
+    viewMode,
+    searchQuery,
+    columnCount,
+    displayItemCount,
+    groupStatsRef,
+    getGroupRef,
+    computeGroupStats,
+  }), [displayData, viewMode, searchQuery, columnCount, displayItemCount, groupStatsRef, getGroupRef, computeGroupStats]);
+
+  const memoizedStyle = useMemo(() => ({
+    overflowX: 'hidden' as const,
+    overflowY: 'auto' as const,
+    isolation: 'auto' as const,
+    transition: 'none', // 禁用过渡动画减少闪烁
+  }), []);
+
+  const memoizedOnCellsRendered = useCallback(({ rowStopIndex }: any) => {
+    const visibleStopIndex = rowStopIndex;
+    
+    if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
+      // 添加防抖机制
+      setTimeout(() => {
+        if (!isLoadingMore && hasNextPage) {
+          loadMoreItems();
+        }
+      }, 100);
+    }
+  }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems]);
+
   return (
     <div 
       ref={containerRef} 
@@ -253,16 +268,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
         <Grid
           key={`search-grid-${containerWidth}-${columnCount}-${viewMode}`}
           cellComponent={CellComponent}
-          cellProps={useMemo(() => ({
-            displayData,
-            viewMode,
-            searchQuery,
-            columnCount,
-            displayItemCount,
-            groupStatsRef,
-            getGroupRef,
-            computeGroupStats,
-          }), [displayData, viewMode, searchQuery, columnCount, displayItemCount, groupStatsRef, getGroupRef, computeGroupStats])}
+          cellProps={memoizedCellProps}
           columnCount={columnCount}
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}
@@ -270,31 +276,8 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
           rowCount={rowCount}
           rowHeight={itemHeight + 16}
           overscanCount={2}
-          style={useMemo(() => ({
-            overflowX: 'hidden' as const,
-            overflowY: 'auto' as const,
-            isolation: 'auto' as const,
-            transition: 'none', // 禁用过渡动画减少闪烁
-          }), [])}
-          onCellsRendered={useCallback(({ rowStartIndex, rowStopIndex }: any) => {
-            const visibleStopIndex = rowStopIndex;
-            
-            if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
-              // 添加防抖机制
-              setTimeout(() => {
-                if (!isLoadingMore && hasNextPage) {
-                  console.log('VirtualSearchGrid: onCellsRendered trigger loadMore', { 
-                    visibleStopIndex, 
-                    rowCount, 
-                    threshold: LOAD_MORE_THRESHOLD,
-                    hasNextPage,
-                    isLoadingMore 
-                  });
-                  loadMoreItems();
-                }
-              }, 100);
-            }
-          }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems])}
+          style={memoizedStyle}
+          onCellsRendered={memoizedOnCellsRendered}
         />
       )}
       
