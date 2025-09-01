@@ -19,6 +19,7 @@ import DoubanCustomSelector from '@/components/DoubanCustomSelector';
 import DoubanSelector from '@/components/DoubanSelector';
 import PageLayout from '@/components/PageLayout';
 import VideoCard from '@/components/VideoCard';
+import VirtualDoubanGrid from '@/components/VirtualDoubanGrid';
 
 function DoubanPageClient() {
   const searchParams = useSearchParams();
@@ -28,6 +29,7 @@ function DoubanPageClient() {
   const [hasMore, setHasMore] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [selectorsReady, setSelectorsReady] = useState(false);
+  const [useVirtualization, setUseVirtualization] = useState(true); // 默认启用虚拟滑动
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadingRef = useRef<HTMLDivElement>(null);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -85,6 +87,21 @@ function DoubanPageClient() {
       setCustomCategories(runtimeConfig.CUSTOM_CATEGORIES);
     }
   }, []);
+
+  // 初始化虚拟滑动设置
+  useEffect(() => {
+    const savedVirtualization = localStorage.getItem('doubanUseVirtualization');
+    if (savedVirtualization !== null) {
+      setUseVirtualization(savedVirtualization === 'true');
+    }
+  }, []);
+
+  // 保存虚拟滑动设置
+  const toggleVirtualization = () => {
+    const newValue = !useVirtualization;
+    setUseVirtualization(newValue);
+    localStorage.setItem('doubanUseVirtualization', newValue.toString());
+  };
 
   // 同步最新参数值到 ref
   useEffect(() => {
@@ -547,8 +564,13 @@ function DoubanPageClient() {
     selectedWeekday,
   ]);
 
-  // 设置滚动监听
+  // 设置滚动监听（仅在非虚拟化模式下使用）
   useEffect(() => {
+    // 如果启用虚拟滑动，不使用传统的滚动监听
+    if (useVirtualization) {
+      return;
+    }
+
     // 如果没有更多数据或正在加载，则不设置监听
     if (!hasMore || isLoadingMore || loading) {
       return;
@@ -576,7 +598,7 @@ function DoubanPageClient() {
         observerRef.current.disconnect();
       }
     };
-  }, [hasMore, isLoadingMore, loading]);
+  }, [hasMore, isLoadingMore, loading, useVirtualization]);
 
   // 处理选择器变化
   const handlePrimaryChange = useCallback(
@@ -725,6 +747,34 @@ function DoubanPageClient() {
             </p>
           </div>
 
+          {/* 虚拟滑动开关 */}
+          <div className='flex justify-end mb-4'>
+            <button
+              onClick={toggleVirtualization}
+              className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
+                useVirtualization
+                  ? 'bg-green-100 text-green-800 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-900/50'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
+              }`}
+              title={useVirtualization ? '点击关闭虚拟滑动' : '点击启用虚拟滑动'}
+            >
+              <svg
+                className={`w-4 h-4 mr-1.5 ${useVirtualization ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d={useVirtualization ? "M13 10V3L4 14h7v7l9-11h-7z" : "M4 6h16M4 10h16M4 14h16M4 18h16"}
+                />
+              </svg>
+              虚拟滑动
+            </button>
+          </div>
+
           {/* 选择器组件 */}
           {type !== 'custom' ? (
             <div className='bg-white/60 dark:bg-gray-800/40 rounded-2xl p-4 sm:p-6 border border-gray-200/30 dark:border-gray-700/30 backdrop-blur-sm'>
@@ -753,59 +803,73 @@ function DoubanPageClient() {
 
         {/* 内容展示区域 */}
         <div className='max-w-[95%] mx-auto mt-8 overflow-visible'>
-          {/* 内容网格 */}
-          <div className='justify-start grid grid-cols-3 gap-x-2 gap-y-12 px-0 sm:px-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))] sm:gap-x-8 sm:gap-y-20'>
-            {loading || !selectorsReady
-              ? // 显示骨架屏
-              skeletonData.map((index) => <DoubanCardSkeleton key={index} />)
-              : // 显示实际数据
-              doubanData.map((item, index) => (
-                <div key={`${item.title}-${index}`} className='w-full'>
-                  <VideoCard
-                    from='douban'
-                    title={item.title}
-                    poster={item.poster}
-                    douban_id={Number(item.id)}
-                    rate={item.rate}
-                    year={item.year}
-                    type={type === 'movie' ? 'movie' : ''} // 电影类型严格控制，tv 不控
-                    isBangumi={
-                      type === 'anime' && primarySelection === '每日放送'
-                    }
-                  />
-                </div>
-              ))}
-          </div>
+          {useVirtualization ? (
+            // 虚拟滑动模式
+            <VirtualDoubanGrid
+              doubanData={doubanData}
+              loading={loading}
+              isLoadingMore={isLoadingMore}
+              hasMore={hasMore}
+              onLoadMore={() => setCurrentPage((prev) => prev + 1)}
+              type={type as 'movie' | 'tv' | 'show' | 'anime'}
+            />
+          ) : (
+            <>
+              {/* 传统网格模式 */}
+              <div className='justify-start grid grid-cols-3 gap-x-2 gap-y-12 px-0 sm:px-2 sm:grid-cols-[repeat(auto-fill,minmax(160px,1fr))] sm:gap-x-8 sm:gap-y-20'>
+                {loading || !selectorsReady
+                  ? // 显示骨架屏
+                  skeletonData.map((index) => <DoubanCardSkeleton key={index} />)
+                  : // 显示实际数据
+                  doubanData.map((item, index) => (
+                    <div key={`${item.title}-${index}`} className='w-full'>
+                      <VideoCard
+                        from='douban'
+                        title={item.title}
+                        poster={item.poster}
+                        douban_id={Number(item.id)}
+                        rate={item.rate}
+                        year={item.year}
+                        type={type === 'movie' ? 'movie' : ''} // 电影类型严格控制，tv 不控
+                        isBangumi={
+                          type === 'anime' && primarySelection === '每日放送'
+                        }
+                      />
+                    </div>
+                  ))}
+              </div>
 
-          {/* 加载更多指示器 */}
-          {hasMore && !loading && (
-            <div
-              ref={(el) => {
-                if (el && el.offsetParent !== null) {
-                  (
-                    loadingRef as React.MutableRefObject<HTMLDivElement | null>
-                  ).current = el;
-                }
-              }}
-              className='flex justify-center mt-12 py-8'
-            >
-              {isLoadingMore && (
-                <div className='flex items-center gap-2'>
-                  <div className='animate-spin rounded-full h-6 w-6 border-b-2 border-green-500'></div>
-                  <span className='text-gray-600'>加载中...</span>
+              {/* 加载更多指示器 */}
+              {hasMore && !loading && (
+                <div
+                  ref={(el) => {
+                    if (el && el.offsetParent !== null) {
+                      (
+                        loadingRef as React.MutableRefObject<HTMLDivElement | null>
+                      ).current = el;
+                    }
+                  }}
+                  className='flex justify-center mt-12 py-8'
+                >
+                  {isLoadingMore && (
+                    <div className='flex items-center gap-2'>
+                      <div className='animate-spin rounded-full h-6 w-6 border-b-2 border-green-500'></div>
+                      <span className='text-gray-600'>加载中...</span>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
 
-          {/* 没有更多数据提示 */}
-          {!hasMore && doubanData.length > 0 && (
-            <div className='text-center text-gray-500 py-8'>已加载全部内容</div>
-          )}
+              {/* 没有更多数据提示 */}
+              {!hasMore && doubanData.length > 0 && (
+                <div className='text-center text-gray-500 py-8'>已加载全部内容</div>
+              )}
 
-          {/* 空状态 */}
-          {!loading && doubanData.length === 0 && (
-            <div className='text-center text-gray-500 py-8'>暂无相关内容</div>
+              {/* 空状态 */}
+              {!loading && doubanData.length === 0 && (
+                <div className='text-center text-gray-500 py-8'>暂无相关内容</div>
+              )}
+            </>
           )}
         </div>
       </div>

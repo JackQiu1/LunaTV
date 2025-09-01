@@ -1,0 +1,199 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+'use client';
+
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
+
+const Grid = dynamic(
+  () => import('react-window').then(mod => ({ default: mod.Grid })),
+  { 
+    ssr: false,
+    loading: () => <div className="animate-pulse h-96 bg-gray-200 dark:bg-gray-800 rounded-lg" />
+  }
+);
+
+import { DoubanItem } from '@/lib/types';
+import { useResponsiveGrid } from '@/hooks/useResponsiveGrid';
+import VideoCard from '@/components/VideoCard';
+
+interface VirtualDoubanGridProps {
+  // 豆瓣数据
+  doubanData: DoubanItem[];
+  
+  // 加载状态
+  loading: boolean;
+  isLoadingMore: boolean;
+  hasMore: boolean;
+  
+  // 分页控制
+  onLoadMore: () => void;
+  
+  // 类型信息
+  type: 'movie' | 'tv' | 'show' | 'anime';
+}
+
+// 渐进式加载配置
+const INITIAL_BATCH_SIZE = 16; // 与原有分页保持一致
+const LOAD_MORE_BATCH_SIZE = 16;
+const LOAD_MORE_THRESHOLD = 5; // 距离底部还有5行时开始加载
+
+export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
+  doubanData,
+  loading,
+  isLoadingMore,
+  hasMore,
+  onLoadMore,
+  type,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { columnCount, itemWidth, itemHeight, containerWidth } = useResponsiveGrid(containerRef);
+  
+  // 渐进式加载状态
+  const [visibleItemCount, setVisibleItemCount] = useState(INITIAL_BATCH_SIZE);
+
+  // 实际显示的项目数量（考虑渐进式加载）
+  const displayItemCount = Math.min(visibleItemCount, doubanData.length);
+  const displayData = doubanData.slice(0, displayItemCount);
+
+  // 重置可见项目数量（当数据变化时）
+  useEffect(() => {
+    setVisibleItemCount(INITIAL_BATCH_SIZE);
+  }, [doubanData]);
+
+  // 检查是否还有更多项目可以加载
+  const hasNextPage = displayItemCount < doubanData.length || hasMore;
+
+  // 加载更多项目
+  const loadMoreItems = useCallback(() => {
+    if (isLoadingMore) return;
+    
+    // 如果本地还有数据，优先显示本地数据
+    if (displayItemCount < doubanData.length) {
+      setVisibleItemCount(prev => Math.min(prev + LOAD_MORE_BATCH_SIZE, doubanData.length));
+    } 
+    // 如果本地数据显示完了，触发远程加载
+    else if (hasMore) {
+      onLoadMore();
+    }
+  }, [isLoadingMore, displayItemCount, doubanData.length, hasMore, onLoadMore]);
+
+  // 网格行数计算
+  const rowCount = Math.ceil(displayItemCount / columnCount);
+
+  // 渲染单个网格项
+  const CellComponent = useCallback(({ 
+    columnIndex, 
+    rowIndex, 
+    style,
+    displayData: cellDisplayData,
+    type: cellType,
+    columnCount: cellColumnCount,
+    displayItemCount: cellDisplayItemCount,
+  }: any) => {
+    const index = rowIndex * cellColumnCount + columnIndex;
+    
+    // 如果超出显示范围，返回空
+    if (index >= cellDisplayItemCount) {
+      return <div style={style} />;
+    }
+
+    const item = cellDisplayData[index];
+    
+    if (!item) {
+      return <div style={style} />;
+    }
+
+    return (
+      <div style={{ ...style, padding: '8px' }}>
+        <VideoCard
+          id={item.id}
+          title={item.title}
+          poster={item.poster}
+          year={item.year || ''}
+          douban_id={item.id}
+          from='douban'
+          type={cellType === 'movie' ? 'movie' : 'tv'}
+          rate={item.rate}
+        />
+      </div>
+    );
+  }, []);
+
+  // 计算网格高度
+  const gridHeight = Math.min(
+    typeof window !== 'undefined' ? window.innerHeight - 200 : 600,
+    800
+  );
+
+  return (
+    <div ref={containerRef} className='w-full'>
+      {doubanData.length === 0 ? (
+        <div className='flex justify-center items-center h-40'>
+          {loading ? (
+            <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-green-500'></div>
+          ) : (
+            <div className='text-center text-gray-500 py-8 dark:text-gray-400'>
+              暂无数据
+            </div>
+          )}
+        </div>
+      ) : containerWidth <= 100 ? (
+        <div className='flex justify-center items-center h-40'>
+          <div className='animate-spin rounded-full h-8 w-8 border-b-2 border-green-500'></div>
+          <span className='ml-2 text-sm text-gray-500'>
+            初始化虚拟滑动... ({Math.round(containerWidth)}px)
+          </span>
+        </div>
+      ) : (
+        <Grid
+          key={`douban-grid-${containerWidth}-${columnCount}`}
+          cellComponent={CellComponent}
+          cellProps={{
+            displayData,
+            type,
+            columnCount,
+            displayItemCount,
+          }}
+          columnCount={columnCount}
+          columnWidth={itemWidth + 16}
+          defaultHeight={gridHeight}
+          defaultWidth={containerWidth}
+          rowCount={rowCount}
+          rowHeight={itemHeight + 16}
+          overscanCount={1}
+          style={{
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            isolation: 'auto',
+          }}
+          onCellsRendered={({ rowStartIndex, rowStopIndex }) => {
+            const visibleStopIndex = rowStopIndex;
+            
+            if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
+              loadMoreItems();
+            }
+          }}
+        />
+      )}
+      
+      {/* 加载更多指示器 */}
+      {containerWidth > 100 && isLoadingMore && (
+        <div className='flex justify-center items-center py-4'>
+          <div className='animate-spin rounded-full h-6 w-6 border-b-2 border-green-500'></div>
+          <span className='ml-2 text-sm text-gray-500 dark:text-gray-400'>
+            加载更多...
+          </span>
+        </div>
+      )}
+      
+      {/* 已加载完所有内容的提示 */}
+      {containerWidth > 100 && !hasNextPage && displayItemCount > INITIAL_BATCH_SIZE && (
+        <div className='text-center py-4 text-sm text-gray-500 dark:text-gray-400'>
+          已显示全部 {displayItemCount} 个结果
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default VirtualDoubanGrid;
