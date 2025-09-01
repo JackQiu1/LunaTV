@@ -104,10 +104,11 @@ function DoubanPageClient() {
     localStorage.setItem('doubanUseVirtualization', newValue.toString());
   };
 
-  // 虚拟滑动加载更多处理 - 添加防抖
+  // 虚拟滑动加载更多处理 - 修复防抖和状态问题
   const handleVirtualLoadMore = useCallback(() => {
+    console.log('VirtualDoubanGrid: handleVirtualLoadMore called, isLoadingMore:', isLoadingMore, 'hasMore:', hasMore);
     if (isLoadingMore || !hasMore) {
-      console.log('VirtualDoubanGrid: Skip load more', { isLoadingMore, hasMore });
+      console.log('VirtualDoubanGrid: Skipping load more - isLoadingMore:', isLoadingMore, 'hasMore:', hasMore);
       return;
     }
 
@@ -118,12 +119,14 @@ function DoubanPageClient() {
 
     // 设置防抖延时
     virtualLoadTimeoutRef.current = setTimeout(() => {
-      if (!isLoadingMore && hasMore) {
-        console.log('VirtualDoubanGrid: Executing load more, currentPage:', currentPage);
-        setCurrentPage((prev) => prev + 1);
-      }
+      console.log('VirtualDoubanGrid: About to execute setCurrentPage');
+      // 使用最新的状态值
+      setCurrentPage((prevPage) => {
+        console.log('VirtualDoubanGrid: Executing load more, currentPage:', prevPage, '-> next:', prevPage + 1);
+        return prevPage + 1;
+      });
     }, 200); // 200ms防抖
-  }, [isLoadingMore, hasMore, currentPage]);
+  }, [isLoadingMore, hasMore]); // 移除 currentPage 依赖
 
   // 同步最新参数值到 ref
   useEffect(() => {
@@ -226,7 +229,7 @@ function DoubanPageClient() {
   // 生成骨架屏数据
   const skeletonData = Array.from({ length: 25 }, (_, index) => index);
 
-  // 参数快照比较函数
+  // 参数快照比较函数 - 严格比较（用于初始数据加载）
   const isSnapshotEqual = useCallback(
     (
       snapshot1: {
@@ -252,6 +255,38 @@ function DoubanPageClient() {
         snapshot1.secondarySelection === snapshot2.secondarySelection &&
         snapshot1.selectedWeekday === snapshot2.selectedWeekday &&
         snapshot1.currentPage === snapshot2.currentPage &&
+        JSON.stringify(snapshot1.multiLevelSelection) ===
+        JSON.stringify(snapshot2.multiLevelSelection)
+      );
+    },
+    []
+  );
+
+  // 参数快照比较函数 - 忽略 currentPage（用于加载更多数据）
+  const isSnapshotEqualIgnorePage = useCallback(
+    (
+      snapshot1: {
+        type: string;
+        primarySelection: string;
+        secondarySelection: string;
+        multiLevelSelection: Record<string, string>;
+        selectedWeekday: string;
+        currentPage: number;
+      },
+      snapshot2: {
+        type: string;
+        primarySelection: string;
+        secondarySelection: string;
+        multiLevelSelection: Record<string, string>;
+        selectedWeekday: string;
+        currentPage: number;
+      }
+    ) => {
+      return (
+        snapshot1.type === snapshot2.type &&
+        snapshot1.primarySelection === snapshot2.primarySelection &&
+        snapshot1.secondarySelection === snapshot2.secondarySelection &&
+        snapshot1.selectedWeekday === snapshot2.selectedWeekday &&
         JSON.stringify(snapshot1.multiLevelSelection) ===
         JSON.stringify(snapshot2.multiLevelSelection)
       );
@@ -458,7 +493,9 @@ function DoubanPageClient() {
 
   // 单独处理 currentPage 变化（加载更多）
   useEffect(() => {
+    console.log('useEffect[currentPage]: currentPage changed to:', currentPage);
     if (currentPage > 0) {
+      console.log('useEffect[currentPage]: Starting fetchMoreData for page:', currentPage);
       const fetchMoreData = async () => {
         // 创建当前参数的快照
         const requestSnapshot = {
@@ -554,15 +591,18 @@ function DoubanPageClient() {
           }
 
           if (data.code === 200) {
-            // 检查参数是否仍然一致，如果一致才设置数据
-            // 使用 ref 获取最新的当前值
+            // 对于加载更多操作，只检查核心参数，允许 currentPage 不同
             const currentSnapshot = { ...currentParamsRef.current };
+            const coreParamsMatch = isSnapshotEqualIgnorePage(
+              requestSnapshot,
+              currentSnapshot
+            );
 
-            if (isSnapshotEqual(requestSnapshot, currentSnapshot)) {
+            if (coreParamsMatch) {
               setDoubanData((prev) => [...prev, ...data.list]);
               setHasMore(data.list.length !== 0);
             } else {
-              console.log('参数不一致，不执行任何操作，避免设置过期数据');
+              console.log('核心参数不一致，不执行任何操作，避免设置过期数据');
             }
           } else {
             throw new Error(data.message || '获取数据失败');
