@@ -107,12 +107,13 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     }, 100);
   }, [isLoadingMore, hasNextPage, totalItemCount]);
 
-  // 网格行数计算 - 使用稳定的最大行数，防止频繁重建
-  const stableRowCount = useMemo(() => {
-    // 使用一个足够大的固定行数，避免频繁变化
-    const estimatedMaxItems = Math.max(displayItemCount * 2, 150);
-    return Math.ceil(estimatedMaxItems / columnCount);
-  }, [columnCount]); // 只依赖 columnCount
+  // 网格行数计算 - 动态但稳定的策略
+  const rowCount = useMemo(() => {
+    // 基于当前数据量计算，但添加一些缓冲行避免频繁变化
+    const actualRows = Math.ceil(displayItemCount / columnCount);
+    const bufferRows = Math.ceil(30 / columnCount); // 添加缓冲行
+    return Math.max(1, actualRows + bufferRows);
+  }, [displayItemCount, columnCount]);
 
   // 渲染单个网格项 - 使用稳定的ref数据
   const CellComponent = useCallback(({ 
@@ -264,20 +265,17 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
 
   // 防抖的加载更多回调
   const debounceRef = useRef<NodeJS.Timeout>();
-  const memoizedOnCellsRendered = useCallback(({ rowStopIndex, columnStopIndex }: any) => {
+  const memoizedOnCellsRendered = useCallback(({ rowStopIndex }: any) => {
     // 清除之前的防抖
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
     
-    // 计算当前可见的最后一个项目索引
-    const lastVisibleItemIndex = rowStopIndex * columnCount + columnStopIndex;
-    
-    // 基于实际数据量而非网格行数判断是否需要加载更多
+    // 计算实际数据的行数
     const actualRowCount = Math.ceil(displayItemCount / columnCount);
-    const shouldLoadMore = lastVisibleItemIndex >= (actualRowCount * columnCount) - (LOAD_MORE_THRESHOLD * columnCount);
     
-    if (shouldLoadMore && hasNextPage && !isLoadingMore) {
+    // 判断是否接近底部，需要加载更多
+    if (rowStopIndex >= actualRowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
       // 使用防抖避免频繁触发
       debounceRef.current = setTimeout(() => {
         if (!isLoadingMore && hasNextPage) {
@@ -322,7 +320,7 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}
           defaultWidth={containerWidth}
-          rowCount={stableRowCount}
+          rowCount={rowCount}
           rowHeight={itemHeight + 16}
           overscanCount={3}
           style={memoizedStyle}
