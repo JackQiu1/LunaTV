@@ -88,13 +88,13 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     return Math.max(1, Math.ceil(displayItemCount / columnCount));
   }, [displayItemCount, columnCount]);
 
-  // 渲染单个网格项 - 恢复正确的props传递
+  // 渲染单个网格项 - 使用稳定的数据获取
   const CellComponent = useCallback(({ 
     columnIndex, 
     rowIndex, 
     style,
-    displayData: cellDisplayData,
-    type: cellType,
+    getDisplayData,
+    getType,
     columnCount: cellColumnCount,
     displayItemCount: cellDisplayItemCount,
   }: any) => {
@@ -105,6 +105,9 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
       return <div style={style} />;
     }
 
+    // 获取最新数据但不触发重新渲染
+    const cellDisplayData = getDisplayData();
+    const cellType = getType();
     const item = cellDisplayData[index];
     
     if (!item) {
@@ -140,13 +143,27 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     800
   );
 
-  // cellProps优化 - 基于react-window源码的useMemoizedObject原理
-  const cellProps = useMemo(() => ({
+  // 创建稳定的数据context
+  const dataContextRef = useRef({
     displayData,
     type,
+  });
+  
+  // 更新数据但不触发Grid重新渲染
+  useEffect(() => {
+    dataContextRef.current = {
+      displayData,
+      type,
+    };
+  }, [displayData, type]);
+
+  // 完全稳定的cellProps - 只传递获取数据的函数
+  const stableCellProps = useMemo(() => ({
+    getDisplayData: () => dataContextRef.current.displayData,
+    getType: () => dataContextRef.current.type,
     columnCount,
     displayItemCount,
-  }), [displayData, type, columnCount, displayItemCount]);
+  }), [columnCount, displayItemCount]); // 只依赖布局相关的稳定值
 
   const memoizedStyle = useMemo(() => ({
     overflowX: 'hidden' as const,
@@ -206,7 +223,7 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
         <Grid
           key={`douban-grid-${Math.floor(containerWidth / 100)}-${columnCount}`}
           cellComponent={CellComponent}
-          cellProps={cellProps}
+          cellProps={stableCellProps}
           columnCount={columnCount}
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}

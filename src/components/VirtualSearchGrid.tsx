@@ -112,29 +112,29 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     return Math.max(1, Math.ceil(displayItemCount / columnCount));
   }, [displayItemCount, columnCount]);
 
-  // 渲染单个网格项 - 使用稳定的ref数据
+  // 渲染单个网格项 - 使用稳定的数据获取
   const CellComponent = useCallback(({ 
     columnIndex, 
     rowIndex, 
     style,
-    getCellData,
+    getContextData,
+    columnCount: cellColumnCount,
+    displayItemCount: cellDisplayItemCount,
   }: any) => {
-    // 从ref获取最新数据
+    // 从context获取最新数据
     const { 
       displayData, 
       viewMode, 
       searchQuery, 
-      columnCount, 
-      displayItemCount,
       groupStatsRef,
       getGroupRef,
       computeGroupStats 
-    } = getCellData();
+    } = getContextData();
     
-    const index = rowIndex * columnCount + columnIndex;
+    const index = rowIndex * cellColumnCount + columnIndex;
     
     // 如果超出显示范围，返回空
-    if (index >= displayItemCount) {
+    if (index >= cellDisplayItemCount) {
       return <div style={style} />;
     }
 
@@ -217,36 +217,34 @@ export const VirtualSearchGrid: React.FC<VirtualSearchGridProps> = ({
     800
   );
 
-  // 使用 ref 传递动态数据，让 cellProps 完全稳定
-  const cellDataRef = useRef({
+  // 创建稳定的数据context
+  const dataContextRef = useRef({
     displayData,
     viewMode,
     searchQuery,
-    columnCount,
-    displayItemCount,
     groupStatsRef,
     getGroupRef,
     computeGroupStats,
   });
-
-  // 更新 ref 数据但不触发重新渲染
+  
+  // 更新数据但不触发Grid重新渲染
   useEffect(() => {
-    cellDataRef.current = {
+    dataContextRef.current = {
       displayData,
       viewMode,
       searchQuery,
-      columnCount,
-      displayItemCount,
       groupStatsRef,
       getGroupRef,
       computeGroupStats,
     };
-  });
+  }, [displayData, viewMode, searchQuery, groupStatsRef, getGroupRef, computeGroupStats]);
 
-  // 完全稳定的 cellProps - 永不变化
+  // 完全稳定的cellProps - 只传递获取数据的函数
   const stableCellProps = useMemo(() => ({
-    getCellData: () => cellDataRef.current,
-  }), []); // 空依赖，永远稳定
+    getContextData: () => dataContextRef.current,
+    columnCount,
+    displayItemCount,
+  }), [columnCount, displayItemCount]); // 只依赖布局相关的稳定值
 
   const memoizedStyle = useMemo(() => ({
     overflowX: 'hidden' as const,
