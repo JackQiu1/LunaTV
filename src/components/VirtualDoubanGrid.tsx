@@ -83,10 +83,13 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     }
   }, [isLoadingMore, displayItemCount, doubanData.length, hasMore, onLoadMore]);
 
-  // 网格行数计算 - 使用 useMemo 缓存
-  const rowCount = useMemo(() => {
-    return Math.max(1, Math.ceil(displayItemCount / columnCount));
-  }, [displayItemCount, columnCount]);
+  // 网格行数计算 - 使用稳定的最大行数，防止频繁重建
+  const stableRowCount = useMemo(() => {
+    // 使用一个足够大的固定行数，避免频繁变化
+    // 基于总数据量估算，给足够的空间
+    const estimatedMaxItems = Math.max(displayItemCount * 3, 200); // 预估最大数据量
+    return Math.ceil(estimatedMaxItems / columnCount);
+  }, [columnCount]); // 只依赖 columnCount，不依赖 displayItemCount
 
   // 渲染单个网格项 - 使用稳定的ref数据
   const CellComponent = useCallback(({ 
@@ -172,25 +175,30 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
     backfaceVisibility: 'hidden' as const,
   }), []);
 
-  // 防抖的加载更多回调
+  // 防抖的加载更多回调 - 基于实际数据而非网格行数
   const debounceRef = useRef<NodeJS.Timeout>();
-  const memoizedOnCellsRendered = useCallback(({ rowStopIndex }: any) => {
+  const memoizedOnCellsRendered = useCallback(({ rowStopIndex, columnStopIndex }: any) => {
     // 清除之前的防抖
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
     
-    const visibleStopIndex = rowStopIndex;
+    // 计算当前可见的最后一个项目索引
+    const lastVisibleItemIndex = rowStopIndex * columnCount + columnStopIndex;
     
-    if (visibleStopIndex >= rowCount - LOAD_MORE_THRESHOLD && hasNextPage && !isLoadingMore) {
+    // 基于实际数据量而非网格行数判断是否需要加载更多
+    const actualRowCount = Math.ceil(displayItemCount / columnCount);
+    const shouldLoadMore = lastVisibleItemIndex >= (actualRowCount * columnCount) - (LOAD_MORE_THRESHOLD * columnCount);
+    
+    if (shouldLoadMore && hasNextPage && !isLoadingMore) {
       // 使用防抖避免频繁触发
       debounceRef.current = setTimeout(() => {
         if (!isLoadingMore && hasNextPage) {
           loadMoreItems();
         }
-      }, 150); // 稍微增加防抖时间
+      }, 150);
     }
-  }, [rowCount, hasNextPage, isLoadingMore, loadMoreItems]);
+  }, [columnCount, displayItemCount, hasNextPage, isLoadingMore, loadMoreItems]);
 
   return (
     <div 
@@ -220,14 +228,14 @@ export const VirtualDoubanGrid: React.FC<VirtualDoubanGridProps> = ({
         </div>
       ) : (
         <Grid
-          key={`douban-grid-${Math.floor(containerWidth / 100)}-${columnCount}-${type}`}
+          key={`douban-grid-${Math.floor(containerWidth / 100)}-${columnCount}`}
           cellComponent={CellComponent}
           cellProps={stableCellProps}
           columnCount={columnCount}
           columnWidth={itemWidth + 16}
           defaultHeight={gridHeight}
           defaultWidth={containerWidth}
-          rowCount={rowCount}
+          rowCount={stableRowCount}
           rowHeight={itemHeight + 16}
           overscanCount={3}
           style={memoizedStyle}

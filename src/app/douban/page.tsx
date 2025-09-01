@@ -234,70 +234,7 @@ function DoubanPageClient() {
     setIsLoadingMore(false);
   }, []);
 
-  // 参数快照比较函数 - 严格比较（用于初始数据加载）
-  const isSnapshotEqual = useCallback(
-    (
-      snapshot1: {
-        type: string;
-        primarySelection: string;
-        secondarySelection: string;
-        multiLevelSelection: Record<string, string>;
-        selectedWeekday: string;
-        currentPage: number;
-      },
-      snapshot2: {
-        type: string;
-        primarySelection: string;
-        secondarySelection: string;
-        multiLevelSelection: Record<string, string>;
-        selectedWeekday: string;
-        currentPage: number;
-      }
-    ) => {
-      return (
-        snapshot1.type === snapshot2.type &&
-        snapshot1.primarySelection === snapshot2.primarySelection &&
-        snapshot1.secondarySelection === snapshot2.secondarySelection &&
-        snapshot1.selectedWeekday === snapshot2.selectedWeekday &&
-        snapshot1.currentPage === snapshot2.currentPage &&
-        JSON.stringify(snapshot1.multiLevelSelection) ===
-        JSON.stringify(snapshot2.multiLevelSelection)
-      );
-    },
-    []
-  );
-
-  // 参数快照比较函数 - 忽略 currentPage（用于加载更多数据）
-  const isSnapshotEqualIgnorePage = useCallback(
-    (
-      snapshot1: {
-        type: string;
-        primarySelection: string;
-        secondarySelection: string;
-        multiLevelSelection: Record<string, string>;
-        selectedWeekday: string;
-        currentPage: number;
-      },
-      snapshot2: {
-        type: string;
-        primarySelection: string;
-        secondarySelection: string;
-        multiLevelSelection: Record<string, string>;
-        selectedWeekday: string;
-        currentPage: number;
-      }
-    ) => {
-      return (
-        snapshot1.type === snapshot2.type &&
-        snapshot1.primarySelection === snapshot2.primarySelection &&
-        snapshot1.secondarySelection === snapshot2.secondarySelection &&
-        snapshot1.selectedWeekday === snapshot2.selectedWeekday &&
-        JSON.stringify(snapshot1.multiLevelSelection) ===
-        JSON.stringify(snapshot2.multiLevelSelection)
-      );
-    },
-    []
-  );
+  // 移除了复杂的参数快照比较函数 - 不再需要
 
   // 生成API请求参数的辅助函数
   const getRequestParams = useCallback(
@@ -327,15 +264,6 @@ function DoubanPageClient() {
 
   // 防抖的数据加载函数
   const loadInitialData = useCallback(async () => {
-    // 创建当前参数的快照
-    const requestSnapshot = {
-      type,
-      primarySelection,
-      secondarySelection,
-      multiLevelSelection: multiLevelValues,
-      selectedWeekday,
-      currentPage: 0,
-    };
 
     try {
       setLoading(true);
@@ -431,18 +359,10 @@ function DoubanPageClient() {
       }
 
       if (data.code === 200) {
-        // 检查参数是否仍然一致，如果一致才设置数据
-        // 使用 ref 获取最新的当前值
-        const currentSnapshot = { ...currentParamsRef.current };
-
-        if (isSnapshotEqual(requestSnapshot, currentSnapshot)) {
-          setDoubanData(data.list);
-          setHasMore(data.list.length !== 0);
-          setLoading(false);
-        } else {
-          console.log('参数不一致，不执行任何操作，避免设置过期数据');
-        }
-        // 如果参数不一致，不执行任何操作，避免设置过期数据
+        // 简化验证：初始数据加载也不做参数快照比较
+        setDoubanData(data.list);
+        setHasMore(data.list.length !== 0);
+        setLoading(false);
       } else {
         throw new Error(data.message || '获取数据失败');
       }
