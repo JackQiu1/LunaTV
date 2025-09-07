@@ -5,8 +5,6 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import Artplayer from 'artplayer';
-import artplayerPluginDanmuku from 'artplayer-plugin-danmuku';
 import Hls from 'hls.js';
 import { Heart } from 'lucide-react';
 
@@ -957,12 +955,12 @@ function PlayPageClient() {
         }
 
         // 2. 销毁HLS实例
-        if (artPlayerRef.current.video && artPlayerRef.current.video.hls) {
+        if (artPlayerRef.current.video.hls) {
           artPlayerRef.current.video.hls.destroy();
           console.log('HLS实例已销毁');
         }
 
-        // 3. 销毁ArtPlayer实例 - 使用false参数避免清空DOM导致的错误
+        // 3. 销毁ArtPlayer实例 (使用false参数避免DOM清理冲突)
         artPlayerRef.current.destroy(false);
         artPlayerRef.current = null;
 
@@ -1858,16 +1856,17 @@ function PlayPageClient() {
   };
 
   useEffect(() => {
-    if (
-      !Artplayer ||
-      !Hls ||
-      !videoUrl ||
-      loading ||
-      currentEpisodeIndex === null ||
-      !artRef.current
-    ) {
-      return;
-    }
+    // 异步初始化播放器，避免SSR问题
+    const initPlayer = async () => {
+      if (
+        !Hls ||
+        !videoUrl ||
+        loading ||
+        currentEpisodeIndex === null ||
+        !artRef.current
+      ) {
+        return;
+      }
 
     // 确保选集索引有效
     if (
@@ -1984,6 +1983,10 @@ function PlayPageClient() {
     }
 
     try {
+      // 使用动态导入的 Artplayer
+      const Artplayer = (window as any).DynamicArtplayer;
+      const artplayerPluginDanmuku = (window as any).DynamicArtplayerPluginDanmuku;
+      
       // 创建新的播放器实例
       Artplayer.PLAYBACK_RATE = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
       Artplayer.USE_RAF = true;
@@ -2105,13 +2108,9 @@ function PlayPageClient() {
                 localStorage.setItem('enable_blockad', String(newVal));
                 if (artPlayerRef.current) {
                   resumeTimeRef.current = artPlayerRef.current.currentTime;
-                  if (
-                    artPlayerRef.current.video &&
-                    artPlayerRef.current.video.hls
-                  ) {
+                  if (artPlayerRef.current.video.hls) {
                     artPlayerRef.current.video.hls.destroy();
                   }
-                  // 使用false参数避免清空DOM导致的错误
                   artPlayerRef.current.destroy(false);
                   artPlayerRef.current = null;
                 }
@@ -2128,7 +2127,7 @@ function PlayPageClient() {
             icon: '<text x="50%" y="50%" font-size="14" font-weight="bold" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">外</text>',
             tooltip: externalDanmuEnabled ? '外部弹幕已开启' : '外部弹幕已关闭',
             switch: externalDanmuEnabled,
-            onSwitch: function (item) {
+            onSwitch: function (item: any) {
               const nextState = !item.switch;
               
               // 立即同步更新所有状态（确保UI响应速度）
@@ -2209,7 +2208,7 @@ function PlayPageClient() {
             name: '跳过片头片尾',
             html: '跳过片头片尾',
             switch: skipConfigRef.current.enable,
-            onSwitch: function (item) {
+            onSwitch: function (item: any) {
               const newConfig = {
                 ...skipConfigRef.current,
                 enable: !item.switch,
@@ -2887,7 +2886,29 @@ function PlayPageClient() {
       console.error('创建播放器失败:', err);
       setError('播放器初始化失败');
     }
-  }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled]);
+    }; // 结束 initPlayer 函数
+
+    // 动态导入 ArtPlayer 并初始化
+    const loadAndInit = async () => {
+      try {
+        const [{ default: Artplayer }, { default: artplayerPluginDanmuku }] = await Promise.all([
+          import('artplayer'),
+          import('artplayer-plugin-danmuku')
+        ]);
+        
+        // 将导入的模块设置为全局变量供 initPlayer 使用
+        (window as any).DynamicArtplayer = Artplayer;
+        (window as any).DynamicArtplayerPluginDanmuku = artplayerPluginDanmuku;
+        
+        await initPlayer();
+      } catch (error) {
+        console.error('动态导入 ArtPlayer 失败:', error);
+        setError('播放器加载失败');
+      }
+    };
+
+    loadAndInit();
+  }, [Hls, videoUrl, loading, blockAdEnabled]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
