@@ -113,6 +113,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get('q');
   const contentType = searchParams.get('contentType') || 'all';
+  const order = searchParams.get('order') || 'relevance';
   
   if (!query) {
     return NextResponse.json({ error: '搜索关键词不能为空' }, { status: 400 });
@@ -145,8 +146,8 @@ export async function GET(request: NextRequest) {
     const YOUTUBE_CACHE_TIME = 60 * 60; // 60分钟（秒）
     const enabledRegionsStr = (youtubeConfig.enabledRegions || []).sort().join(',') || 'none';
     const enabledCategoriesStr = (youtubeConfig.enabledCategories || []).sort().join(',') || 'none';
-    // 缓存key包含功能状态、演示模式、最大结果数、内容类型，确保配置变化时缓存隔离
-    const cacheKey = `youtube-search-${youtubeConfig.enabled}-${youtubeConfig.enableDemo}-${maxResults}-${encodeURIComponent(query)}-${contentType}-${enabledRegionsStr}-${enabledCategoriesStr}`;
+    // 缓存key包含功能状态、演示模式、最大结果数、内容类型、排序，确保配置变化时缓存隔离
+    const cacheKey = `youtube-search-${youtubeConfig.enabled}-${youtubeConfig.enableDemo}-${maxResults}-${encodeURIComponent(query)}-${contentType}-${order}-${enabledRegionsStr}-${enabledCategoriesStr}`;
     
     console.log(`🔍 检查YouTube搜索缓存: ${cacheKey}`);
     
@@ -206,9 +207,10 @@ export async function GET(request: NextRequest) {
       const responseData = {
         success: true,
         videos: finalResults,
-        total: filteredResults.length,
+        total: finalResults.length,
         query: query,
-        source: 'demo'
+        source: 'demo',
+        warning: youtubeConfig.enableDemo ? '当前为演示模式，显示模拟数据' : 'API Key未配置，显示模拟数据。请在管理后台配置YouTube API Key以获取真实搜索结果'
       };
 
       // 服务端直接保存到数据库（不用ClientCache，避免HTTP循环调用）
@@ -230,12 +232,57 @@ export async function GET(request: NextRequest) {
       `part=snippet&` +
       `type=video&` +
       `maxResults=${maxResults}&` +
-      `order=relevance`;
+      `order=${order}`;
 
     const response = await fetch(searchUrl);
 
     if (!response.ok) {
-      throw new Error(`YouTube API请求失败: ${response.status}`);
+      // 获取错误详细信息
+      const errorData = await response.json().catch(() => ({}));
+      console.log('YouTube API错误详情:', errorData);
+      
+      let errorMessage = '';
+      
+      // 检查具体的错误状态
+      if (response.status === 400) {
+        const reason = errorData.error?.errors?.[0]?.reason;
+        const message = errorData.error?.message || '';
+        
+        if (reason === 'keyInvalid' || message.includes('API key not valid')) {
+          errorMessage = 'YouTube API Key无效，请在管理后台检查配置';
+        } else if (reason === 'badRequest') {
+          if (message.includes('API key')) {
+            errorMessage = 'YouTube API Key格式错误，请在管理后台重新配置';
+          } else {
+            errorMessage = `YouTube API请求参数错误: ${message}`;
+          }
+        } else {
+          errorMessage = `YouTube API请求错误: ${message || 'Bad Request'}`;
+        }
+      } else if (response.status === 403) {
+        const reason = errorData.error?.errors?.[0]?.reason;
+        const message = errorData.error?.message || '';
+        
+        if (reason === 'quotaExceeded' || message.includes('quota')) {
+          errorMessage = 'YouTube API配额已用完，请稍后重试';
+        } else if (message.includes('not been used') || message.includes('disabled')) {
+          errorMessage = 'YouTube Data API v3未启用，请在Google Cloud Console中启用该API';
+        } else if (message.includes('blocked') || message.includes('restricted')) {
+          errorMessage = 'API Key被限制访问，请检查Google Cloud Console中的API Key限制设置';
+        } else {
+          errorMessage = 'YouTube API访问被拒绝，请检查API Key权限配置';
+        }
+      } else if (response.status === 401) {
+        errorMessage = 'YouTube API认证失败，请检查API Key是否正确';
+      } else {
+        errorMessage = `YouTube API请求失败 (${response.status})，请检查API Key配置`;
+      }
+      
+      // 返回错误响应而不是抛出异常
+      return NextResponse.json({
+        success: false,
+        error: errorMessage
+      }, { status: 400 });
     }
 
     const data = await response.json();
