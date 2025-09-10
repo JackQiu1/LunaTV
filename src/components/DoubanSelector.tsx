@@ -104,7 +104,7 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
     { label: '剧场版', value: '剧场版' },
   ];
 
-  // 快捷类型按钮选项
+  // 快捷类型按钮选项 - 电影
   const quickGenreOptions = [
     { label: '恐怖', value: 'horror' },
     { label: '动作', value: 'action' },
@@ -116,13 +116,45 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
     { label: '惊悚', value: 'thriller' },
   ];
 
+  // 快捷类型按钮选项 - 电视剧
+  const quickTVGenreOptions = [
+    { label: '爱情', value: 'romance' },
+    { label: '悬疑', value: 'suspense' },
+    { label: '古装', value: 'costume' },
+    { label: '家庭', value: 'family' },
+    { label: '犯罪', value: 'crime' },
+    { label: '剧情', value: 'drama' },
+    { label: '喜剧', value: 'comedy' },
+    { label: '武侠', value: 'wuxia' },
+  ];
+
+  // 快捷类型按钮选项 - 综艺
+  const quickShowGenreOptions = [
+    { label: '真人秀', value: 'reality' },
+    { label: '脱口秀', value: 'talkshow' },
+    { label: '音乐', value: 'music' },
+    { label: '歌舞', value: 'musical' },
+  ];
+
   // 处理快捷类型按钮点击
   const handleQuickGenreClick = (genreValue: string) => {
     // 自动切换到"全部"分类
     onPrimaryChange('全部');
     
+    // 根据内容类型选择对应的选项数组
+    let currentOptions;
+    if (type === 'movie') {
+      currentOptions = quickGenreOptions;
+    } else if (type === 'tv') {
+      currentOptions = quickTVGenreOptions;
+    } else if (type === 'show') {
+      currentOptions = quickShowGenreOptions;
+    } else {
+      return; // 其他类型不支持快捷按钮
+    }
+    
     // 根据value找到对应的中文label
-    const genreOption = quickGenreOptions.find(opt => opt.value === genreValue);
+    const genreOption = currentOptions.find(opt => opt.value === genreValue);
     const genreLabel = genreOption?.label || genreValue;
     
     // 设置MultiLevelSelector的初始值
@@ -146,8 +178,8 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
     // 这样可以确保状态的一致性
     const newFilterValues: Record<string, string> = {};
     
-    // 类型选项映射
-    const typeOptions = [
+    // 类型选项映射 - 电影
+    const movieTypeOptions = [
       { label: '喜剧', value: 'comedy' },
       { label: '爱情', value: 'romance' },
       { label: '动作', value: 'action' },
@@ -170,6 +202,50 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
       { label: '纪录片', value: 'documentary' },
       { label: '短片', value: 'short' },
     ];
+
+    // 类型选项映射 - 电视剧
+    const tvTypeOptions = [
+      { label: '喜剧', value: 'comedy' },
+      { label: '爱情', value: 'romance' },
+      { label: '悬疑', value: 'suspense' },
+      { label: '武侠', value: 'wuxia' },
+      { label: '古装', value: 'costume' },
+      { label: '家庭', value: 'family' },
+      { label: '犯罪', value: 'crime' },
+      { label: '科幻', value: 'sci-fi' },
+      { label: '恐怖', value: 'horror' },
+      { label: '历史', value: 'history' },
+      { label: '战争', value: 'war' },
+      { label: '动作', value: 'action' },
+      { label: '冒险', value: 'adventure' },
+      { label: '传记', value: 'biography' },
+      { label: '剧情', value: 'drama' },
+      { label: '奇幻', value: 'fantasy' },
+      { label: '惊悚', value: 'thriller' },
+      { label: '灾难', value: 'disaster' },
+      { label: '歌舞', value: 'musical' },
+      { label: '音乐', value: 'music' },
+    ];
+
+    // 类型选项映射 - 综艺
+    const showTypeOptions = [
+      { label: '真人秀', value: 'reality' },
+      { label: '脱口秀', value: 'talkshow' },
+      { label: '音乐', value: 'music' },
+      { label: '歌舞', value: 'musical' },
+    ];
+
+    // 根据内容类型选择对应的类型映射
+    let typeOptions: { label: string; value: string }[];
+    if (type === 'movie') {
+      typeOptions = movieTypeOptions;
+    } else if (type === 'tv') {
+      typeOptions = tvTypeOptions;
+    } else if (type === 'show') {
+      typeOptions = showTypeOptions;
+    } else {
+      typeOptions = movieTypeOptions; // 默认使用电影类型
+    }
 
     // 地区选项映射
     const regionOptions = [
@@ -507,14 +583,31 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
 
   // 渲染快捷类型按钮
   const renderQuickGenreButtons = () => {
+    // 根据内容类型选择对应的选项
+    let currentOptions;
+    let titleText;
+    
+    if (type === 'movie') {
+      currentOptions = quickGenreOptions;
+      titleText = '快捷分类';
+    } else if (type === 'tv') {
+      currentOptions = quickTVGenreOptions;
+      titleText = '热门剧集';
+    } else if (type === 'show') {
+      currentOptions = quickShowGenreOptions;
+      titleText = '节目类型';
+    } else {
+      return null; // 其他类型不显示快捷按钮
+    }
+
     return (
       <div className='space-y-2'>
         <div className='flex items-center gap-2'>
           <span className='text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap'>
-            快捷分类
+            {titleText}
           </span>
           <div className='flex flex-wrap gap-1.5 sm:gap-2'>
-            {quickGenreOptions.map((genre) => {
+            {currentOptions.map((genre) => {
               const isActive = genre.value === currentFilterValues.type;
               return (
                 <button
@@ -535,7 +628,12 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
           </div>
         </div>
         <div className='text-xs text-gray-500 dark:text-gray-400 ml-14 sm:ml-16'>
-          💡 热门类型快捷访问 · 更多类型请选择"全部"进行筛选
+          💡 {(() => {
+            if (type === 'movie') return '热门类型快捷访问';
+            if (type === 'tv') return '热门剧集类型快捷访问';
+            if (type === 'show') return '节目类型快捷访问';
+            return '快捷访问';
+          })()} · 更多类型请选择"全部"进行筛选
         </div>
       </div>
     );
@@ -601,6 +699,9 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
       {/* 电视剧类型 - 显示两级选择器 */}
       {type === 'tv' && (
         <div className='space-y-3 sm:space-y-4'>
+          {/* 快捷类型按钮 - 只在电视剧类型时显示 */}
+          {renderQuickGenreButtons()}
+          
           {/* 一级选择器 */}
           <div className='flex flex-col sm:flex-row sm:items-center gap-2'>
             <span className='text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-400 min-w-[48px]'>
@@ -642,6 +743,7 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
                   key={`${type}-${primarySelection}`}
                   onChange={handleMultiLevelChange}
                   contentType={type}
+                  initialValues={currentFilterValues}
                 />
               </div>
             </div>
@@ -707,6 +809,9 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
       {/* 综艺类型 - 显示两级选择器 */}
       {type === 'show' && (
         <div className='space-y-3 sm:space-y-4'>
+          {/* 快捷类型按钮 - 只在综艺类型时显示 */}
+          {renderQuickGenreButtons()}
+          
           {/* 一级选择器 */}
           <div className='flex flex-col sm:flex-row sm:items-center gap-2'>
             <span className='text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-400 min-w-[48px]'>
@@ -748,6 +853,7 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
                   key={`${type}-${primarySelection}`}
                   onChange={handleMultiLevelChange}
                   contentType={type}
+                  initialValues={currentFilterValues}
                 />
               </div>
             </div>
