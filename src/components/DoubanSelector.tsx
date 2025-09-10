@@ -136,33 +136,19 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
     { label: '歌舞', value: 'musical' },
   ];
 
-  // 快捷类型按钮选项 - 动漫
-  const quickAnimeGenreOptions = [
-    { label: '治愈', value: 'healing' },
-    { label: '恋爱', value: 'love' },
-    { label: '科幻', value: 'sci_fi' },
-    { label: '悬疑', value: 'suspense' },
-    { label: '励志', value: 'inspirational' },
-    { label: '运动', value: 'sports' },
-  ];
-
   // 处理快捷类型按钮点击
   const handleQuickGenreClick = (genreValue: string) => {
-    // 根据内容类型选择对应的选项数组和分类
+    // 自动切换到"全部"分类
+    onPrimaryChange('全部');
+    
+    // 根据内容类型选择对应的选项数组
     let currentOptions;
     if (type === 'movie') {
       currentOptions = quickGenreOptions;
-      onPrimaryChange('全部');
     } else if (type === 'tv') {
       currentOptions = quickTVGenreOptions;
-      onPrimaryChange('全部');
     } else if (type === 'show') {
       currentOptions = quickShowGenreOptions;
-      onPrimaryChange('全部');
-    } else if (type === 'anime') {
-      currentOptions = quickAnimeGenreOptions;
-      // 动漫统一使用番剧，简单直接
-      onPrimaryChange('番剧');
     } else {
       return; // 其他类型不支持快捷按钮
     }
@@ -249,24 +235,6 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
       { label: '歌舞', value: 'musical' },
     ];
 
-    // 类型选项映射 - 动漫（共同类型）
-    const animeTypeOptions = [
-      { label: '治愈', value: 'healing' },
-      { label: '恋爱', value: 'love' },
-      { label: '科幻', value: 'sci_fi' },
-      { label: '悬疑', value: 'suspense' },
-      { label: '励志', value: 'inspirational' },
-      { label: '运动', value: 'sports' },
-      // 还包含其他番剧和剧场版的共同类型
-      { label: '历史', value: 'history' },
-      { label: '歌舞', value: 'musical' },
-      { label: '恶搞', value: 'parody' },
-      { label: '后宫', value: 'harem' },
-      { label: '情色', value: 'erotic' },
-      { label: '人性', value: 'human_nature' },
-      { label: '魔幻', value: 'fantasy' },
-    ];
-
     // 根据内容类型选择对应的类型映射
     let typeOptions: { label: string; value: string }[];
     if (type === 'movie') {
@@ -275,16 +243,6 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
       typeOptions = tvTypeOptions;
     } else if (type === 'show') {
       typeOptions = showTypeOptions;
-    } else if (type === 'anime') {
-      // 动漫使用简化的共同类型映射
-      typeOptions = [
-        { label: '治愈', value: 'healing' },
-        { label: '恋爱', value: 'love' },
-        { label: '科幻', value: 'sci_fi' },
-        { label: '悬疑', value: 'suspense' },
-        { label: '励志', value: 'inspirational' },
-        { label: '运动', value: 'sports' },
-      ];
     } else {
       typeOptions = movieTypeOptions; // 默认使用电影类型
     }
@@ -658,9 +616,6 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
     } else if (type === 'show') {
       currentOptions = quickShowGenreOptions;
       titleText = '节目类型';
-    } else if (type === 'anime') {
-      currentOptions = quickAnimeGenreOptions;
-      titleText = '热门类型';
     } else {
       return null; // 其他类型不显示快捷按钮
     }
@@ -697,7 +652,6 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
             if (type === 'movie') return '热门类型快捷访问';
             if (type === 'tv') return '热门剧集类型快捷访问';
             if (type === 'show') return '节目类型快捷访问';
-            if (type === 'anime') return '热门动漫类型快捷访问';
             return '快捷访问';
           })()} · 更多类型请选择"全部"进行筛选
         </div>
@@ -820,9 +774,6 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
       {/* 动漫类型 - 显示一级选择器和多级选择器 */}
       {type === 'anime' && (
         <div className='space-y-3 sm:space-y-4'>
-          {/* 快捷类型按钮 - 只在动漫类型时显示 */}
-          {renderQuickGenreButtons()}
-          
           <div className='flex flex-col sm:flex-row sm:items-center gap-2'>
             <span className='text-xs sm:text-sm font-medium text-gray-600 dark:text-gray-400 min-w-[48px]'>
               分类
@@ -855,12 +806,20 @@ const DoubanSelector: React.FC<DoubanSelectorProps> = ({
                 筛选
               </span>
               <div className='overflow-x-auto'>
-                <MultiLevelSelector
-                  key={`anime-tv-${primarySelection}-${currentFilterValues.type || 'default'}`}
-                  onChange={handleMultiLevelChange}
-                  contentType='anime-tv'
-                  initialValues={currentFilterValues}
-                />
+                {(primarySelection || animePrimaryOptions[0].value) ===
+                '番剧' ? (
+                  <MultiLevelSelector
+                    key={`anime-tv-${primarySelection}`}
+                    onChange={handleMultiLevelChange}
+                    contentType='anime-tv'
+                  />
+                ) : (
+                  <MultiLevelSelector
+                    key={`anime-movie-${primarySelection}`}
+                    onChange={handleMultiLevelChange}
+                    contentType='anime-movie'
+                  />
+                )}
               </div>
             </div>
           )}
