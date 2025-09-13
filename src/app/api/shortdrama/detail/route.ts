@@ -30,26 +30,37 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 解析视频，默认使用代理
-    const result = await parseShortDramaEpisode(videoId, episodeNum, true);
+    // 先尝试指定集数
+    let result = await parseShortDramaEpisode(videoId, episodeNum, true);
 
-    if (result.code !== 0) {
+    // 如果失败，尝试其他集数
+    if (result.code !== 0 || !result.data || !result.data.totalEpisodes) {
+      result = await parseShortDramaEpisode(videoId, episodeNum === 1 ? 2 : 1, true);
+    }
+
+    // 如果还是失败，尝试第0集
+    if (result.code !== 0 || !result.data || !result.data.totalEpisodes) {
+      result = await parseShortDramaEpisode(videoId, 0, true);
+    }
+
+    if (result.code !== 0 || !result.data) {
       return NextResponse.json(
         { error: result.msg || '解析失败' },
         { status: 400 }
       );
     }
 
+    const totalEpisodes = Math.max(result.data.totalEpisodes || 1, 1);
+
     // 转换为兼容格式
-    // 对于短剧，episodes数组存储的是集数占位符，真实URL需要通过额外API获取
     const response = {
       id: result.data!.videoId.toString(),
       title: result.data!.videoName,
       poster: result.data!.cover,
-      episodes: Array.from({ length: result.data!.totalEpisodes }, (_, i) =>
+      episodes: Array.from({ length: totalEpisodes }, (_, i) =>
         `shortdrama:${result.data!.videoId}:${i}` // API实际使用0-based索引
       ),
-      episodes_titles: Array.from({ length: result.data!.totalEpisodes }, (_, i) =>
+      episodes_titles: Array.from({ length: totalEpisodes }, (_, i) =>
         `第${i + 1}集`
       ),
       source: 'shortdrama',
