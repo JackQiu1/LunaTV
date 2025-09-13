@@ -509,13 +509,18 @@ export abstract class BaseRedisStorage implements IStorage {
   }
 
   async setCache(key: string, data: any, expireSeconds?: number): Promise<void> {
-    const cacheKey = this.cacheKey(key);
-    const value = JSON.stringify(data);
-    
-    if (expireSeconds) {
-      await this.withRetry(() => this.client.setEx(cacheKey, expireSeconds, value));
-    } else {
-      await this.withRetry(() => this.client.set(cacheKey, value));
+    try {
+      const cacheKey = this.cacheKey(key);
+      const value = JSON.stringify(data);
+
+      if (expireSeconds) {
+        await this.withRetry(() => this.client.setEx(cacheKey, expireSeconds, value));
+      } else {
+        await this.withRetry(() => this.client.set(cacheKey, value));
+      }
+    } catch (error) {
+      console.error(`${this.config.clientName} setCache error (key: ${key}):`, error);
+      throw error; // 重新抛出错误以便上层处理
     }
   }
 
@@ -559,6 +564,7 @@ export abstract class BaseRedisStorage implements IStorage {
 
       // 重新计算统计数据
       const allUsers = await this.getAllUsers();
+
       const userStats: UserPlayStat[] = [];
       let totalWatchTime = 0;
       let totalPlays = 0;
@@ -647,13 +653,13 @@ export abstract class BaseRedisStorage implements IStorage {
       }
 
       // 计算统计数据
-      const totalWatchTime = records.reduce((sum, record) => sum + record.play_time, 0);
+      const totalWatchTime = records.reduce((sum, record) => sum + (record.play_time || 0), 0);
       const totalPlays = records.length;
-      const lastPlayTime = Math.max(...records.map(r => r.save_time));
+      const lastPlayTime = Math.max(...records.map(r => r.save_time || 0));
 
       // 最近10条记录，按时间排序
       const recentRecords = records
-        .sort((a, b) => b.save_time - a.save_time)
+        .sort((a, b) => (b.save_time || 0) - (a.save_time || 0))
         .slice(0, 10);
 
       // 平均观看时长
@@ -662,8 +668,9 @@ export abstract class BaseRedisStorage implements IStorage {
       // 最常观看的来源
       const sourceMap = new Map<string, number>();
       records.forEach(record => {
-        const count = sourceMap.get(record.source_name) || 0;
-        sourceMap.set(record.source_name, count + 1);
+        const sourceName = record.source_name || '未知来源';
+        const count = sourceMap.get(sourceName) || 0;
+        sourceMap.set(sourceName, count + 1);
       });
 
       const mostWatchedSource = sourceMap.size > 0
