@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getCacheTime } from '@/lib/config';
 
-// 标记为动态路由
+// 强制动态路由，禁用所有缓存
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 // 服务端专用函数，直接调用外部API
 async function getShortDramaListInternal(
@@ -50,6 +52,17 @@ export async function GET(request: NextRequest) {
     const page = searchParams.get('page');
     const size = searchParams.get('size');
 
+    // 详细日志记录
+    console.log('🚀 [SHORTDRAMA API] 收到请求:', {
+      timestamp: new Date().toISOString(),
+      categoryId,
+      page,
+      size,
+      userAgent: request.headers.get('user-agent'),
+      referer: request.headers.get('referer'),
+      url: request.url
+    });
+
     if (!categoryId) {
       return NextResponse.json(
         { error: '缺少必要参数: categoryId' },
@@ -70,13 +83,37 @@ export async function GET(request: NextRequest) {
 
     const result = await getShortDramaListInternal(category, pageNum, pageSize);
 
-    // 设置与豆瓣一致的缓存策略
-    const cacheTime = await getCacheTime();
+    // 记录返回的数据
+    console.log('✅ [SHORTDRAMA API] 返回数据:', {
+      timestamp: new Date().toISOString(),
+      count: result.list?.length || 0,
+      firstItem: result.list?.[0] ? {
+        id: result.list[0].id,
+        name: result.list[0].name,
+        update_time: result.list[0].update_time
+      } : null,
+      hasMore: result.hasMore
+    });
+
+    // 强力禁用所有层级的缓存
     const response = NextResponse.json(result);
-    response.headers.set('Cache-Control', `public, max-age=${cacheTime}, s-maxage=${cacheTime}`);
-    response.headers.set('CDN-Cache-Control', `public, s-maxage=${cacheTime}`);
-    response.headers.set('Vercel-CDN-Cache-Control', `public, s-maxage=${cacheTime}`);
-    response.headers.set('Netlify-Vary', 'query');
+
+    // 标准HTTP缓存控制
+    response.headers.set('Cache-Control', 'no-cache, no-store, must-revalidate, proxy-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+
+    // 移动端特定缓存控制
+    response.headers.set('Surrogate-Control', 'no-store');
+    response.headers.set('X-Accel-Expires', '0');
+
+    // 防止代理缓存
+    response.headers.set('Vary', 'Accept-Encoding, User-Agent');
+
+    // 强制刷新标识
+    response.headers.set('X-Cache-Status', 'MISS');
+    response.headers.set('X-Debug-Timestamp', new Date().toISOString());
+    response.headers.set('X-Force-Refresh', 'true');
 
     return response;
   } catch (error) {
