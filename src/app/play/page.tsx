@@ -687,6 +687,14 @@ function PlayPageClient() {
     return variants;
   };
 
+  // 检查是否包含查询中的所有关键词（与downstream评分逻辑保持一致）
+  const checkAllKeywordsMatch = (queryTitle: string, resultTitle: string): boolean => {
+    const queryWords = queryTitle.replace(/[^\w\s\u4e00-\u9fff]/g, '').split(/\s+/).filter(w => w.length > 0);
+
+    // 检查结果标题是否包含查询中的所有关键词
+    return queryWords.every(word => resultTitle.includes(word));
+  };
+
   // 网盘搜索函数
   const handleNetDiskSearch = async (query: string) => {
     if (!query.trim()) return;
@@ -1722,10 +1730,10 @@ function PlayPageClient() {
         const allResults: SearchResult[] = [];
         let bestResults: SearchResult[] = [];
         
-        // 依次尝试每个搜索变体
+        // 依次尝试每个搜索变体，采用早期退出策略
         for (const variant of searchVariants) {
           console.log('尝试搜索变体:', variant);
-          
+
           const response = await fetch(
             `/api/search?q=${encodeURIComponent(variant)}`
           );
@@ -1734,11 +1742,13 @@ function PlayPageClient() {
             continue;
           }
           const data = await response.json();
-          
+
           if (data.results && data.results.length > 0) {
             allResults.push(...data.results);
-            
-            // 处理搜索结果，使用智能模糊匹配
+
+            // 移除早期退出策略，让downstream的相关性评分发挥作用
+
+            // 处理搜索结果，使用智能模糊匹配（与downstream评分逻辑保持一致）
             const filteredResults = data.results.filter(
               (result: SearchResult) => {
                 const queryTitle = videoTitleRef.current.replaceAll(' ', '').toLowerCase();
@@ -1749,9 +1759,8 @@ function PlayPageClient() {
                   queryTitle.includes(resultTitle) ||
                   // 移除数字和标点后匹配（针对"死神来了：血脉诅咒" vs "死神来了6：血脉诅咒"）
                   resultTitle.replace(/\d+|[：:]/g, '') === queryTitle.replace(/\d+|[：:]/g, '') ||
-                  // 核心关键词匹配
-                  (queryTitle.includes('死神来了') && resultTitle.includes('死神来了') &&
-                   queryTitle.includes('血脉诅咒') && resultTitle.includes('血脉诅咒'));
+                  // 通用关键词匹配：检查是否包含查询中的所有关键词
+                  checkAllKeywordsMatch(queryTitle, resultTitle);
 
                 const yearMatch = videoYearRef.current
                   ? result.year.toLowerCase() === videoYearRef.current.toLowerCase()
@@ -1764,9 +1773,9 @@ function PlayPageClient() {
                 return titleMatch && yearMatch && typeMatch;
               }
             );
-            
+
             if (filteredResults.length > 0) {
-              console.log(`变体 "${variant}" 找到 ${filteredResults.length} 个匹配结果`);
+              console.log(`变体 "${variant}" 找到 ${filteredResults.length} 个精确匹配结果`);
               bestResults = filteredResults;
               break; // 找到精确匹配就停止
             }

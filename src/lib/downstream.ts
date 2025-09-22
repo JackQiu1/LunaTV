@@ -141,14 +141,16 @@ export async function searchFromApi(
 ): Promise<SearchResult[]> {
   try {
     const apiBaseUrl = apiSite.api;
-    
-    // 智能搜索：生成多种查询变体
+
+    // 智能搜索：生成搜索变体
     const searchVariants = generateSearchVariants(query);
     let results: SearchResult[] = [];
     let pageCountFromFirst = 0;
-    
+
     // 调试：输出搜索变体
-    console.log(`[DEBUG] 搜索变体 for "${query}":`, searchVariants);
+    if (searchVariants.length > 1) {
+      console.log(`[DEBUG] 搜索变体 for "${query}":`, searchVariants);
+    }
 
     // 尝试所有搜索变体，收集所有结果，然后选择最相关的
     const allVariantResults: Array<{variant: string, results: SearchResult[], relevanceScore: number}> = [];
@@ -267,9 +269,8 @@ function calculateRelevanceScore(originalQuery: string, variant: string, results
     score += 500; // 空格变冒号的变体较高分
   } else if (variant.includes(':') && originalQuery.includes(' ')) {
     score += 400; // 空格变英文冒号
-  } else if (/\d/.test(variant) && !/\d/.test(originalQuery)) {
-    score += 300; // 添加数字的变体
   }
+  // 移除数字变体加分逻辑，依赖智能匹配处理
 
   // 结果质量分数：检查结果标题的匹配程度
   const originalWords = originalQuery.toLowerCase().replace(/[^\w\s\u4e00-\u9fff]/g, '').split(/\s+/).filter(w => w.length > 0);
@@ -282,25 +283,21 @@ function calculateRelevanceScore(originalQuery: string, variant: string, results
     let matchedWords = 0;
     originalWords.forEach(word => {
       if (title.includes(word)) {
-        titleScore += 50;
+        // 较长的词（如"血脉诅咒"）给予更高权重
+        const wordWeight = word.length > 2 ? 100 : 50;
+        titleScore += wordWeight;
         matchedWords++;
       }
     });
 
-    // 完全匹配奖励：所有词都匹配
+    // 完全匹配奖励：所有词都匹配时给予巨大奖励
     if (matchedWords === originalWords.length && originalWords.length > 1) {
-      titleScore += 200;
+      titleScore += 500; // 大幅提高完全匹配的奖励
     }
 
-    // 数字优先级：如果查询不包含数字但结果包含，优先较大的数字
-    if (!/\d/.test(originalQuery) && /\d+/.test(title)) {
-      const numbers = title.match(/\d+/g);
-      if (numbers) {
-        // 取最大的数字作为优先级指标
-        const maxNumber = Math.max(...numbers.map(n => parseInt(n)));
-        // 较大的数字获得更高分数（假设是较新的版本）
-        titleScore += Math.min(maxNumber * 10, 100);
-      }
+    // 部分匹配惩罚：如果只匹配了部分词，降低分数
+    if (matchedWords < originalWords.length && originalWords.length > 1) {
+      titleScore -= 100; // 惩罚不完整匹配
     }
 
     // 标题长度惩罚：过长的标题降低优先级（可能不够精确）
@@ -347,13 +344,13 @@ function generateSearchVariants(originalQuery: string): string[] {
     }
   });
 
-  // 3. 数字变体处理（针对"死神来了 血脉诅咒" vs "死神来了6：血脉诅咒"这种情况）
-  const numberVariants = generateNumberVariants(trimmed);
-  numberVariants.forEach(variant => {
-    if (!variants.includes(variant)) {
-      variants.push(variant);
-    }
-  });
+  // 3. 移除数字变体生成（优化性能，依赖页面智能匹配逻辑处理数字差异）
+  // const numberVariants = generateNumberVariants(trimmed);
+  // numberVariants.forEach(variant => {
+  //   if (!variants.includes(variant)) {
+  //     variants.push(variant);
+  //   }
+  // });
 
   // 如果包含空格，生成额外变体
   if (trimmed.includes(' ')) {
@@ -405,53 +402,6 @@ function generateSearchVariants(originalQuery: string): string[] {
 
   // 去重并返回
   return Array.from(new Set(variants));
-}
-
-/**
- * 生成数字相关的搜索变体
- * @param query 原始查询
- * @returns 数字变体数组
- */
-function generateNumberVariants(query: string): string[] {
-  const variants: string[] = [];
-
-  // 如果查询不包含数字，尝试添加常见的数字变体
-  if (!/\d/.test(query)) {
-    // 针对系列电影/剧集，尝试添加常见的数字
-    const seriesNumbers = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'];
-
-    seriesNumbers.forEach(num => {
-      // 在空格位置插入数字
-      if (query.includes(' ')) {
-        const withNumber = query.replace(/\s+/, num);
-        variants.push(withNumber);
-
-        // 也尝试数字+冒号的组合
-        const withNumberColon = query.replace(/\s+/, num + '：');
-        variants.push(withNumberColon);
-
-        const withNumberEnglishColon = query.replace(/\s+/, num + ':');
-        variants.push(withNumberEnglishColon);
-      } else {
-        // 在末尾添加数字
-        variants.push(query + num);
-      }
-    });
-  } else {
-    // 如果包含数字，尝试移除数字的变体
-    const withoutNumbers = query.replace(/\d+/g, '');
-    if (withoutNumbers !== query && withoutNumbers.trim()) {
-      variants.push(withoutNumbers.trim());
-
-      // 清理多余的标点符号
-      const cleaned = withoutNumbers.replace(/[：:]\s*/, ' ').trim();
-      if (cleaned !== withoutNumbers && !variants.includes(cleaned)) {
-        variants.push(cleaned);
-      }
-    }
-  }
-
-  return variants;
 }
 
 /**
