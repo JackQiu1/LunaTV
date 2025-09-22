@@ -549,8 +549,11 @@ function PlayPageClient() {
           variants.push(withEnglishColon);
         }
 
-        // 仅使用主关键词搜索
-        if (!variants.includes(mainKeyword)) {
+        // 仅使用主关键词搜索（过滤无意义的词）
+        const meaninglessWords = ['the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by'];
+        if (!variants.includes(mainKeyword) &&
+            !meaninglessWords.includes(mainKeyword.toLowerCase()) &&
+            mainKeyword.length > 2) {
           variants.push(mainKeyword);
         }
       }
@@ -628,7 +631,7 @@ function PlayPageClient() {
     }
 
     // 完全去除所有标点符号
-    const noPunctuation = query.replace(/[：；，。！？、""''（）【】《》:;,.!?'()[\]<>]/g, '');
+    const noPunctuation = query.replace(/[：；，。！？、""''（）【】《》:;,.!?"'()[\]<>]/g, '');
     if (noPunctuation !== query && noPunctuation.trim()) {
       variants.push(noPunctuation);
     }
@@ -1731,12 +1734,92 @@ function PlayPageClient() {
           }
         }
         
-        // 如果没有精确匹配，返回所有结果让用户选择
-        const finalResults = bestResults.length > 0 ? bestResults : 
-          // 去重所有结果
-          Array.from(
-            new Map(allResults.map(item => [`${item.source}-${item.id}`, item])).values()
-          );
+        // 智能匹配：英文标题严格匹配，中文标题宽松匹配
+        let finalResults = bestResults;
+
+        // 如果没有精确匹配，根据语言类型进行不同策略的匹配
+        if (bestResults.length === 0) {
+          const queryTitle = videoTitleRef.current.toLowerCase().trim();
+          const allCandidates = allResults;
+
+          // 检测查询主要语言（英文 vs 中文）
+          const englishChars = (queryTitle.match(/[a-z\s]/g) || []).length;
+          const chineseChars = (queryTitle.match(/[\u4e00-\u9fff]/g) || []).length;
+          const isEnglishQuery = englishChars > chineseChars;
+
+          console.log(`搜索语言检测: ${isEnglishQuery ? '英文' : '中文'} - "${queryTitle}"`);
+
+          let relevantMatches;
+
+          if (isEnglishQuery) {
+            // 英文查询：使用词汇匹配策略，避免不相关结果
+            console.log('使用英文词汇匹配策略');
+
+            // 提取有效英文词汇（过滤停用词）
+            const queryWords = queryTitle.toLowerCase()
+              .replace(/[^\w\s]/g, ' ')
+              .split(/\s+/)
+              .filter(word => word.length > 2 && !['the', 'a', 'an', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for', 'with', 'by'].includes(word));
+
+            console.log('英文关键词:', queryWords);
+
+            relevantMatches = allCandidates.filter(result => {
+              const title = result.title.toLowerCase();
+              const titleWords = title.replace(/[^\w\s]/g, ' ').split(/\s+/).filter(word => word.length > 1);
+
+              // 计算词汇匹配度：标题必须包含至少50%的查询关键词
+              const matchedWords = queryWords.filter(queryWord =>
+                titleWords.some(titleWord =>
+                  titleWord.includes(queryWord) || queryWord.includes(titleWord) ||
+                  // 允许部分相似（如gumball vs gum）
+                  (queryWord.length > 4 && titleWord.length > 4 &&
+                   queryWord.substring(0, 4) === titleWord.substring(0, 4))
+                )
+              );
+
+              const wordMatchRatio = matchedWords.length / queryWords.length;
+              if (wordMatchRatio >= 0.5) {
+                console.log(`英文词汇匹配 (${matchedWords.length}/${queryWords.length}): "${result.title}" - 匹配词: [${matchedWords.join(', ')}]`);
+                return true;
+              }
+              return false;
+            });
+          } else {
+            // 中文查询：宽松匹配，保持现有行为
+            console.log('使用中文宽松匹配策略');
+            relevantMatches = allCandidates.filter(result => {
+              const title = result.title.toLowerCase();
+              const normalizedQuery = queryTitle.replace(/[^\w\u4e00-\u9fff]/g, '');
+              const normalizedTitle = title.replace(/[^\w\u4e00-\u9fff]/g, '');
+
+              // 包含匹配或50%相似度
+              if (normalizedTitle.includes(normalizedQuery) || normalizedQuery.includes(normalizedTitle)) {
+                console.log(`中文包含匹配: "${result.title}"`);
+                return true;
+              }
+
+              const commonChars = Array.from(normalizedQuery).filter(char => normalizedTitle.includes(char)).length;
+              const similarity = commonChars / normalizedQuery.length;
+              if (similarity >= 0.5) {
+                console.log(`中文相似匹配 (${(similarity*100).toFixed(1)}%): "${result.title}"`);
+                return true;
+              }
+              return false;
+            });
+          }
+
+          console.log(`匹配结果: ${relevantMatches.length}/${allCandidates.length}`);
+
+          const maxResults = isEnglishQuery ? 5 : 20; // 英文更严格控制结果数
+          if (relevantMatches.length > 0 && relevantMatches.length <= maxResults) {
+            finalResults = Array.from(
+              new Map(relevantMatches.map(item => [`${item.source}-${item.id}`, item])).values()
+            );
+          } else {
+            console.log('没有找到合理的匹配，返回空结果');
+            finalResults = [];
+          }
+        }
           
         console.log(`智能搜索完成，最终返回 ${finalResults.length} 个结果`);
         setAvailableSources(finalResults);
