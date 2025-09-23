@@ -49,10 +49,10 @@ const TMDBCard: React.FC<{
 }> = ({ item, contentType, onClick }) => {
   return (
     <div
-      className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg transition-all duration-200 cursor-pointer"
+      className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg transition-all duration-200 cursor-pointer h-full flex flex-col"
       onClick={onClick}
     >
-      <div className="aspect-[3/4] relative">
+      <div className="aspect-[3/4] relative flex-shrink-0">
         {item.poster ? (
           <img
             src={item.poster}
@@ -85,37 +85,11 @@ const TMDBCard: React.FC<{
         )}
       </div>
 
+      {/* 简化：只显示标题 */}
       <div className="p-3">
-        <h3 className="font-medium text-sm text-gray-900 dark:text-gray-100 line-clamp-2 mb-2">
+        <h3 className="font-medium text-sm text-gray-900 dark:text-gray-100 line-clamp-2 text-center">
           {item.title}
         </h3>
-
-        <div className="space-y-1 text-xs text-gray-500 dark:text-gray-400">
-          {/* 角色信息 */}
-          {item.character && (
-            <div>饰演: {item.character}</div>
-          )}
-
-          {/* 集数信息（电视剧） */}
-          {contentType === 'tv' && item.episode_count && (
-            <div>{item.episode_count} 集</div>
-          )}
-
-          {/* 人气和投票数 */}
-          <div className="flex justify-between">
-            {item.popularity && (
-              <span>人气: {item.popularity.toFixed(1)}</span>
-            )}
-            {item.vote_count && (
-              <span>{item.vote_count} 票</span>
-            )}
-          </div>
-
-          {/* 语言 */}
-          {item.original_language && (
-            <div>语言: {item.original_language.toUpperCase()}</div>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -199,11 +173,13 @@ export const VirtualTMDBGrid: React.FC<VirtualTMDBGridProps> = ({
 
     return (
       <div style={style} {...ariaAttributes} className="p-2">
-        <TMDBCard
-          item={item}
-          contentType={cellContentType}
-          onClick={() => cellOnItemClick?.(item)}
-        />
+        <div className="w-full h-full">
+          <TMDBCard
+            item={item}
+            contentType={cellContentType}
+            onClick={() => cellOnItemClick?.(item)}
+          />
+        </div>
       </div>
     );
   }, []);
