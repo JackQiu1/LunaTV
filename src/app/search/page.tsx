@@ -90,8 +90,11 @@ function SearchPageClient() {
     onlyRated: false,
     sortBy: 'popularity',
     sortOrder: 'desc',
-    limit: 50
+    limit: undefined // 移除默认限制，显示所有结果
   });
+
+  // TMDB筛选面板显示状态
+  const [tmdbFilterVisible, setTmdbFilterVisible] = useState(false);
   // 聚合卡片 refs 与聚合统计缓存
   const groupRefs = useRef<Map<string, React.RefObject<VideoCardHandle>>>(new Map());
   const groupStatsRef = useRef<Map<string, { douban_id?: number; episodes?: number; source_names: string[] }>>(new Map());
@@ -770,9 +773,13 @@ function SearchPageClient() {
       // 构建筛选参数
       const params = new URLSearchParams({
         actor: query.trim(),
-        type: type,
-        limit: (filterState.limit || 50).toString()
+        type: type
       });
+
+      // 只有设置了limit且大于0时才添加limit参数
+      if (filterState.limit && filterState.limit > 0) {
+        params.append('limit', filterState.limit.toString());
+      }
 
       // 添加筛选参数
       if (filterState.startYear) params.append('startYear', filterState.startYear.toString());
@@ -1108,14 +1115,17 @@ function SearchPageClient() {
                     <div className='mt-4'>
                       <TMDBFilterPanel
                         contentType={tmdbActorType}
-                        filterState={tmdbFilterState}
-                        onFilterChange={(newFilterState) => {
+                        filters={tmdbFilterState}
+                        onFiltersChange={(newFilterState) => {
                           setTmdbFilterState(newFilterState);
                           const currentQuery = searchQuery.trim() || searchParams?.get('q');
                           if (currentQuery) {
                             handleTmdbActorSearch(currentQuery, tmdbActorType, newFilterState);
                           }
                         }}
+                        isVisible={tmdbFilterVisible}
+                        onToggleVisible={() => setTmdbFilterVisible(!tmdbFilterVisible)}
+                        resultCount={tmdbActorResults?.length || 0}
                       />
                     </div>
                   </div>
