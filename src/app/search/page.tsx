@@ -22,7 +22,6 @@ import VirtualSearchGrid from '@/components/VirtualSearchGrid';
 import NetDiskSearchResults from '@/components/NetDiskSearchResults';
 import YouTubeVideoCard from '@/components/YouTubeVideoCard';
 import DirectYouTubePlayer from '@/components/DirectYouTubePlayer';
-import VirtualTMDBGrid from '@/components/VirtualTMDBGrid';
 import TMDBFilterPanel, { TMDBFilterState } from '@/components/TMDBFilterPanel';
 
 function SearchPageClient() {
@@ -76,9 +75,23 @@ function SearchPageClient() {
   const [tmdbActorError, setTmdbActorError] = useState<string | null>(null);
   const [tmdbActorType, setTmdbActorType] = useState<'movie' | 'tv'>('movie');
 
-  // TMDB筛选相关状态
-  const [tmdbFilters, setTmdbFilters] = useState<TMDBFilterState>({});
-  const [showTmdbFilters, setShowTmdbFilters] = useState(false);
+  // TMDB筛选状态
+  const [tmdbFilterState, setTmdbFilterState] = useState<TMDBFilterState>({
+    startYear: undefined,
+    endYear: undefined,
+    minRating: undefined,
+    maxRating: undefined,
+    minPopularity: undefined,
+    maxPopularity: undefined,
+    minVoteCount: undefined,
+    minEpisodeCount: undefined,
+    genreIds: [],
+    languages: [],
+    onlyRated: false,
+    sortBy: 'popularity',
+    sortOrder: 'desc',
+    limit: 50
+  });
   // 聚合卡片 refs 与聚合统计缓存
   const groupRefs = useRef<Map<string, React.RefObject<VideoCardHandle>>>(new Map());
   const groupStatsRef = useRef<Map<string, { douban_id?: number; episodes?: number; source_names: string[] }>>(new Map());
@@ -470,7 +483,7 @@ function SearchPageClient() {
         } else if (searchType === 'youtube' && !youtubeLoading && !youtubeResults && !youtubeError) {
           handleYouTubeSearch(currentQuery);
         } else if (searchType === 'tmdb-actor' && !tmdbActorLoading && !tmdbActorResults && !tmdbActorError) {
-          handleTmdbActorSearch(currentQuery);
+          handleTmdbActorSearch(currentQuery, tmdbActorType, tmdbFilterState);
         }
       }
     }
@@ -746,7 +759,7 @@ function SearchPageClient() {
   };
 
   // TMDB演员搜索函数
-  const handleTmdbActorSearch = async (query: string, type = tmdbActorType, filters = tmdbFilters) => {
+  const handleTmdbActorSearch = async (query: string, type = tmdbActorType, filterState = tmdbFilterState) => {
     if (!query.trim()) return;
 
     setTmdbActorLoading(true);
@@ -754,37 +767,34 @@ function SearchPageClient() {
     setTmdbActorResults(null);
 
     try {
-      // 构建查询URL
-      let searchUrl = `/api/tmdb/actor?actor=${encodeURIComponent(query.trim())}&type=${type}`;
+      // 构建筛选参数
+      const params = new URLSearchParams({
+        actor: query.trim(),
+        type: type,
+        limit: (filterState.limit || 50).toString()
+      });
 
       // 添加筛选参数
-      if (filters.startYear) searchUrl += `&startYear=${filters.startYear}`;
-      if (filters.endYear) searchUrl += `&endYear=${filters.endYear}`;
-      if (filters.minRating) searchUrl += `&minRating=${filters.minRating}`;
-      if (filters.maxRating) searchUrl += `&maxRating=${filters.maxRating}`;
-      if (filters.minPopularity) searchUrl += `&minPopularity=${filters.minPopularity}`;
-      if (filters.maxPopularity) searchUrl += `&maxPopularity=${filters.maxPopularity}`;
-      if (filters.minVoteCount) searchUrl += `&minVoteCount=${filters.minVoteCount}`;
-      if (filters.minEpisodeCount) searchUrl += `&minEpisodeCount=${filters.minEpisodeCount}`;
-      if (filters.genreIds && filters.genreIds.length > 0) {
-        searchUrl += `&genreIds=${filters.genreIds.join(',')}`;
-      }
-      if (filters.languages && filters.languages.length > 0) {
-        searchUrl += `&languages=${filters.languages.join(',')}`;
-      }
-      if (filters.onlyRated) searchUrl += `&onlyRated=true`;
-      if (filters.sortBy) searchUrl += `&sortBy=${filters.sortBy}`;
-      if (filters.sortOrder) searchUrl += `&sortOrder=${filters.sortOrder}`;
-      if (filters.limit) searchUrl += `&limit=${filters.limit}`;
+      if (filterState.startYear) params.append('startYear', filterState.startYear.toString());
+      if (filterState.endYear) params.append('endYear', filterState.endYear.toString());
+      if (filterState.minRating) params.append('minRating', filterState.minRating.toString());
+      if (filterState.maxRating) params.append('maxRating', filterState.maxRating.toString());
+      if (filterState.minPopularity) params.append('minPopularity', filterState.minPopularity.toString());
+      if (filterState.maxPopularity) params.append('maxPopularity', filterState.maxPopularity.toString());
+      if (filterState.minVoteCount) params.append('minVoteCount', filterState.minVoteCount.toString());
+      if (filterState.minEpisodeCount) params.append('minEpisodeCount', filterState.minEpisodeCount.toString());
+      if (filterState.genreIds && filterState.genreIds.length > 0) params.append('genreIds', filterState.genreIds.join(','));
+      if (filterState.languages && filterState.languages.length > 0) params.append('languages', filterState.languages.join(','));
+      if (filterState.onlyRated) params.append('onlyRated', 'true');
+      if (filterState.sortBy) params.append('sortBy', filterState.sortBy);
+      if (filterState.sortOrder) params.append('sortOrder', filterState.sortOrder);
 
-      console.log('TMDB搜索URL:', searchUrl);
-
-      const response = await fetch(searchUrl);
+      // 调用TMDB API端点
+      const response = await fetch(`/api/tmdb/actor?${params.toString()}`);
       const data = await response.json();
 
       if (response.ok && data.code === 200) {
         setTmdbActorResults(data.list || []);
-        console.log('TMDB搜索结果:', data.list?.length, '项');
       } else {
         setTmdbActorError(data.error || data.message || '搜索演员失败');
       }
@@ -793,15 +803,6 @@ function SearchPageClient() {
       setTmdbActorError('搜索演员失败，请稍后重试');
     } finally {
       setTmdbActorLoading(false);
-    }
-  };
-
-  // TMDB筛选变化回调
-  const handleTmdbFiltersChange = (newFilters: TMDBFilterState) => {
-    setTmdbFilters(newFilters);
-    // 如果有搜索查询，立即重新搜索
-    if (searchQuery.trim() && searchType === 'tmdb-actor') {
-      handleTmdbActorSearch(searchQuery.trim(), tmdbActorType, newFilters);
     }
   };
 
@@ -826,7 +827,7 @@ function SearchPageClient() {
     } else if (searchType === 'tmdb-actor') {
       // TMDB演员搜索
       router.push(`/search?q=${encodeURIComponent(trimmed)}`);
-      handleTmdbActorSearch(trimmed);
+      handleTmdbActorSearch(trimmed, tmdbActorType, tmdbFilterState);
     } else {
       // 原有的影视搜索逻辑
       setIsLoading(true);
@@ -967,7 +968,7 @@ function SearchPageClient() {
                     // 如果当前有搜索词，立即触发TMDB演员搜索
                     const currentQuery = searchQuery.trim() || searchParams?.get('q');
                     if (currentQuery && showResults) {
-                      handleTmdbActorSearch(currentQuery);
+                      handleTmdbActorSearch(currentQuery, tmdbActorType, tmdbFilterState);
                     }
                   }}
                   className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
@@ -1087,7 +1088,7 @@ function SearchPageClient() {
                               setTmdbActorType(type.key as 'movie' | 'tv');
                               const currentQuery = searchQuery.trim() || searchParams?.get('q');
                               if (currentQuery) {
-                                handleTmdbActorSearch(currentQuery, type.key as 'movie' | 'tv');
+                                handleTmdbActorSearch(currentQuery, type.key as 'movie' | 'tv', tmdbFilterState);
                               }
                             }}
                             className={`px-3 py-1 text-sm rounded-full border transition-colors ${
@@ -1101,29 +1102,20 @@ function SearchPageClient() {
                           </button>
                         ))}
                       </div>
-
-                      {/* 筛选器开关 */}
-                      <button
-                        onClick={() => setShowTmdbFilters(!showTmdbFilters)}
-                        className={`ml-4 px-3 py-1 text-sm rounded-full border transition-colors ${
-                          showTmdbFilters
-                            ? 'bg-purple-500 text-white border-purple-500'
-                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700'
-                        }`}
-                      >
-                        🔍 筛选
-                      </button>
                     </div>
 
                     {/* TMDB筛选面板 */}
                     <div className='mt-4'>
                       <TMDBFilterPanel
                         contentType={tmdbActorType}
-                        filters={tmdbFilters}
-                        onFiltersChange={handleTmdbFiltersChange}
-                        isVisible={showTmdbFilters}
-                        onToggleVisible={() => setShowTmdbFilters(!showTmdbFilters)}
-                        resultCount={tmdbActorResults?.length}
+                        filterState={tmdbFilterState}
+                        onFilterChange={(newFilterState) => {
+                          setTmdbFilterState(newFilterState);
+                          const currentQuery = searchQuery.trim() || searchParams?.get('q');
+                          if (currentQuery) {
+                            handleTmdbActorSearch(currentQuery, tmdbActorType, newFilterState);
+                          }
+                        }}
                       />
                     </div>
                   </div>
@@ -1135,7 +1127,7 @@ function SearchPageClient() {
                         onClick={() => {
                           const currentQuery = searchQuery.trim() || searchParams?.get('q');
                           if (currentQuery) {
-                            handleTmdbActorSearch(currentQuery, tmdbActorType);
+                            handleTmdbActorSearch(currentQuery, tmdbActorType, tmdbFilterState);
                           }
                         }}
                         className='px-4 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors'
@@ -1143,18 +1135,27 @@ function SearchPageClient() {
                         重试
                       </button>
                     </div>
-                  ) : (
-                    <VirtualTMDBGrid
-                      results={tmdbActorResults || []}
-                      isLoading={tmdbActorLoading}
-                      searchQuery={searchQuery}
-                      contentType={tmdbActorType}
-                      onItemClick={(item) => {
-                        // 可以在这里添加点击处理逻辑，比如跳转到详情页
-                        console.log('TMDB项目点击:', item);
-                      }}
-                    />
-                  )}
+                  ) : tmdbActorResults && tmdbActorResults.length > 0 ? (
+                    <div className='grid grid-cols-3 gap-x-2 gap-y-14 sm:gap-y-20 px-0 sm:px-2 sm:grid-cols-[repeat(auto-fill,_minmax(11rem,_1fr))] sm:gap-x-8'>
+                      {tmdbActorResults.map((item, index) => (
+                        <div key={item.id || index} className='w-full'>
+                          <VideoCard
+                            id={item.id}
+                            title={item.title}
+                            poster={item.poster}
+                            year={item.year}
+                            rate={item.rate}
+                            from='douban'
+                            type={tmdbActorType}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : !tmdbActorLoading ? (
+                    <div className='text-center text-gray-500 py-8 dark:text-gray-400'>
+                      未找到相关演员作品
+                    </div>
+                  ) : null}
                 </>
               ) : searchType === 'youtube' ? (
                 /* YouTube搜索结果 */
