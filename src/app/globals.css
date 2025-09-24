@@ -250,3 +250,39 @@ div[data-media-provider] video {
 .smooth-transition {
   transition: all 0.3s ease-in-out;
 }
+
+/* 移动端隐藏弹幕配置按钮 */
+@media (max-width: 1080px), (hover: none) {
+  .artplayer-plugin-danmuku .apd-config {
+    display: none !important;
+  }
+}
+
+/* 修复桌面端弹幕配置弹窗hover不稳定问题 */
+@media (min-width: 1081px) and (hover: hover) {
+  /* 确保面板在hover时稳定显示，但不扩大触发区域 */
+  .artplayer-plugin-danmuku .apd-config:hover .apd-config-panel {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    visibility: visible !important;
+    transition: opacity 0.1s ease !important;
+  }
+
+  /* 关键：面板自身被hover时也保持显示 */
+  .artplayer-plugin-danmuku .apd-config-panel:hover {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    visibility: visible !important;
+  }
+
+  /* 面板内部元素始终可交互 */
+  .artplayer-plugin-danmuku .apd-config-panel * {
+    pointer-events: auto !important;
+  }
+
+  /* 防止进度条拖拽时弹窗干扰 */
+  .artplayer[data-dragging="true"] .artplayer-plugin-danmuku .apd-config-panel {
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+}
