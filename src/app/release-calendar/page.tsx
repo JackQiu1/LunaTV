@@ -1,9 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-
-// 🚀 关键：设置页面缓存，2小时内浏览器直接缓存页面，无需重新加载
-export const revalidate = 7200; // 2小时 = 7200秒
 import { Calendar, Filter, Search, Clock, Film, Tv, MapPin, Tag, ChevronUp } from 'lucide-react';
 
 import { ReleaseCalendarItem, ReleaseCalendarResult } from '@/lib/types';
@@ -93,7 +90,7 @@ export default function ReleaseCalendarPage() {
     });
   };
 
-  // 获取数据（优化版，前端直接读数据库缓存，避免重复API调用）
+  // 获取数据（简化版，移除localStorage缓存，依赖API数据库缓存）
   const fetchData = async (reset = false) => {
     try {
       setLoading(true);
@@ -102,9 +99,7 @@ export default function ReleaseCalendarPage() {
       // 清理过期的localStorage缓存（兼容性清理）
       cleanExpiredCache();
 
-      // 🚀 页面缓存已处理大部分访问，直接调用API（API有数据库缓存）
-
-      // 🌐 从API获取数据（API会处理数据库缓存更新）
+      // 🌐 直接从API获取数据（API有数据库缓存，全局共享，24小时有效）
       console.log('🌐 正在从API获取发布日历数据...');
       const apiUrl = reset ? '/api/release-calendar?refresh=true' : '/api/release-calendar';
       const response = await fetch(apiUrl);
@@ -116,7 +111,7 @@ export default function ReleaseCalendarPage() {
       const result: ReleaseCalendarResult = await response.json();
       console.log(`📊 获取到 ${result.items.length} 条上映数据`);
 
-      // 前端过滤
+      // 前端过滤（无需缓存，API数据库缓存已处理）
       const filteredData = applyClientSideFilters(result);
       setData(filteredData);
       setCurrentPage(1);
