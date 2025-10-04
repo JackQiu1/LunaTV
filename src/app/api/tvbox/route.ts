@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
+import { getSpiderJar, getCandidates } from '@/lib/spiderJar';
 
 // Helper function to get base URL with SITE_BASE env support
 function getBaseUrl(request: NextRequest): string {
@@ -74,6 +75,21 @@ class ConcurrencyLimiter {
 
 const categoriesLimiter = new ConcurrencyLimiter(10); // 最多同时10个请求
 
+// 私网地址判断
+function isPrivateHost(host: string): boolean {
+  if (!host) return true;
+  const lower = host.toLowerCase();
+  return (
+    lower.startsWith('localhost') ||
+    lower.startsWith('127.') ||
+    lower.startsWith('0.0.0.0') ||
+    lower.startsWith('10.') ||
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(lower) ||
+    lower.startsWith('192.168.') ||
+    lower === '::1'
+  );
+}
+
 // TVBox源格式接口 (基于官方标准)
 interface TVBoxSource {
   key: string;
@@ -130,6 +146,14 @@ interface TVBoxConfig {
     regex: string[];
   }>; // 播放规则（用于影视仓模式）
   maxHomeVideoContent?: string; // 首页最大视频数量
+  spider_backup?: string; // 备用本地代理地址
+  spider_url?: string; // 实际使用的 spider URL
+  spider_md5?: string; // spider jar 的 MD5
+  spider_cached?: boolean; // 是否来自缓存
+  spider_real_size?: number; // 实际 jar 大小（字节）
+  spider_tried?: number; // 尝试次数
+  spider_success?: boolean; // 是否成功获取远程 jar
+  spider_candidates?: string[]; // 候选地址列表
 }
 
 export async function GET(request: NextRequest) {
@@ -138,6 +162,7 @@ export async function GET(request: NextRequest) {
     const format = searchParams.get('format') || 'json'; // 支持json和base64格式
     const mode = (searchParams.get('mode') || '').toLowerCase(); // 支持safe|min模式
     const token = searchParams.get('token'); // 获取token参数
+    const forceSpiderRefresh = searchParams.get('forceSpiderRefresh') === '1'; // 强制刷新spider缓存
 
     // 读取当前配置
     const config = await getConfig();
@@ -568,14 +593,47 @@ export async function GET(request: NextRequest) {
       ]
     };
 
-    // 设置全局 spider jar（从 detail 中提取），添加 fallback 机制
-    const fallbackSpiderJars = [
-      'https://raw.githubusercontent.com/FongMi/CatVodSpider/main/jar/custom_spider.jar;md5;a8b9c1d2e3f4',
-      'https://gitcode.net/qq_26898231/TVBox/-/raw/main/JAR/XC.jar;md5;e53eb37c4dc3dce1c8ee0c996ca3a024',
-      'https://gh-proxy.com/https://raw.githubusercontent.com/FongMi/CatVodSpider/main/jar/custom_spider.jar',
-    ];
+    // 使用新的 Spider Jar 管理逻辑（下载真实 jar + 缓存）
+    const jarInfo = await getSpiderJar(forceSpiderRefresh);
 
-    tvboxConfig.spider = globalSpiderJar || fallbackSpiderJars[0];
+    // 🔑 最终策略：优先使用远程公网 jar，失败时回退到稳定的公网备用地址
+    let finalSpiderUrl: string;
+
+    if (jarInfo.success && jarInfo.source !== 'fallback') {
+      // 成功获取远程 jar，直接使用远程 URL（公网地址，减轻服务器负载）
+      finalSpiderUrl = `${jarInfo.source};md5;${jarInfo.md5}`;
+      console.log(`[Spider] 使用远程公网 jar: ${jarInfo.source}`);
+    } else {
+      // 远程失败，使用已知稳定的公网 jar（不会 private/404）
+      finalSpiderUrl = 'https://gitcode.net/qq_26898231/TVBox/-/raw/main/JAR/XC.jar;md5;e53eb37c4dc3dce1c8ee0c996ca3a024';
+      console.warn(`[Spider] 远程 jar 获取失败，使用稳定公网备用: ${finalSpiderUrl}`);
+    }
+
+    // 如果用户源配置中有自定义jar，优先使用（但必须是公网地址）
+    if (globalSpiderJar) {
+      try {
+        const jarUrl = new URL(globalSpiderJar.split(';')[0]);
+        if (!isPrivateHost(jarUrl.hostname)) {
+          // 用户自定义的公网 jar，直接使用
+          finalSpiderUrl = globalSpiderJar;
+          console.log(`[Spider] 使用用户自定义 jar: ${globalSpiderJar}`);
+        } else {
+          console.warn(`[Spider] 用户配置的jar是私网地址，使用自动选择结果`);
+        }
+      } catch {
+        // URL解析失败，使用自动选择结果
+        console.warn(`[Spider] 用户配置的jar解析失败，使用自动选择结果`);
+      }
+    }
+
+    // 设置 spider 字段和状态透明化字段
+    tvboxConfig.spider = finalSpiderUrl;
+    tvboxConfig.spider_url = jarInfo.source; // 真实来源（用于诊断）
+    tvboxConfig.spider_md5 = jarInfo.md5;
+    tvboxConfig.spider_cached = jarInfo.cached;
+    tvboxConfig.spider_real_size = jarInfo.size;
+    tvboxConfig.spider_tried = jarInfo.tried;
+    tvboxConfig.spider_success = jarInfo.success;
 
     // 安全/最小模式：仅返回必要字段，提高兼容性
     if (mode === 'safe' || mode === 'min') {
@@ -624,6 +682,10 @@ export async function GET(request: NextRequest) {
         maxHomeVideoContent: '20',
       } as any;
     }
+
+    // 添加 Spider 状态透明化字段（帮助诊断）
+    tvboxConfig.spider_backup = 'https://gitcode.net/qq_26898231/TVBox/-/raw/main/JAR/XC.jar';
+    tvboxConfig.spider_candidates = getCandidates();
 
     // 根据format参数返回不同格式
     if (format === 'base64' || format === 'txt') {
