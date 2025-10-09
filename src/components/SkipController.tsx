@@ -265,6 +265,10 @@ export default function SkipController({
     // 如果是片尾且开启了自动下一集，直接跳转下一集
     if (segment.type === 'ending' && segment.autoNextEpisode && onNextEpisode) {
       console.log('⏭️ 片尾自动跳转下一集');
+      // 🔑 暂停视频，防止 video:ended 事件再次触发
+      if (artPlayerRef.current && !artPlayerRef.current.paused) {
+        artPlayerRef.current.pause();
+      }
       onNextEpisode();
       // 显示跳过提示
       if (artPlayerRef.current.notice) {
@@ -418,6 +422,11 @@ export default function SkipController({
 
       if (skipTimeoutRef.current) {
         clearTimeout(skipTimeoutRef.current);
+      }
+
+      // 🔑 暂停视频，防止 video:ended 事件再次触发
+      if (artPlayerRef.current && !artPlayerRef.current.paused) {
+        artPlayerRef.current.pause();
       }
 
       // 显示提示
@@ -646,34 +655,42 @@ export default function SkipController({
     loadSkipConfig();
   }, [loadSkipConfig]);
 
-  // 当 skipConfig 改变时，同步到 batchSettings
+  // 当 skipConfig 改变时，同步到 batchSettings（但保留用户全局设置）
+  // 🔑 注意：这个 useEffect 只在 skipConfig 改变时触发，不受 duration 影响
   useEffect(() => {
     if (skipConfig && skipConfig.segments.length > 0) {
       // 找到片头和片尾片段
       const openingSegment = skipConfig.segments.find(s => s.type === 'opening');
       const endingSegment = skipConfig.segments.find(s => s.type === 'ending');
 
-      // 更新批量设置状态
+      // 🔑 从 localStorage 读取用户全局设置，避免被覆盖
+      const savedEnableAutoSkip = localStorage.getItem('enableAutoSkip');
+      const savedEnableAutoNextEpisode = localStorage.getItem('enableAutoNextEpisode');
+      const userAutoSkip = savedEnableAutoSkip !== null ? JSON.parse(savedEnableAutoSkip) : true;
+      const userAutoNextEpisode = savedEnableAutoNextEpisode !== null ? JSON.parse(savedEnableAutoNextEpisode) : true;
+
+      // 更新批量设置状态（使用用户全局设置，而不是配置文件中的值）
       setBatchSettings(prev => ({
         ...prev,
-        openingStart: openingSegment ? secondsToTime(openingSegment.start) : '0:00',
-        openingEnd: openingSegment ? secondsToTime(openingSegment.end) : '1:30',
+        openingStart: openingSegment ? secondsToTime(openingSegment.start) : prev.openingStart,
+        openingEnd: openingSegment ? secondsToTime(openingSegment.end) : prev.openingEnd,
         endingStart: endingSegment
           ? (endingSegment.mode === 'remaining' && endingSegment.remainingTime
               ? secondsToTime(endingSegment.remainingTime)
-              : secondsToTime(duration - endingSegment.start))
-          : '2:00',
+              : (duration > 0 ? secondsToTime(duration - endingSegment.start) : prev.endingStart))
+          : prev.endingStart,
         endingEnd: endingSegment
-          ? (endingSegment.mode === 'remaining' && endingSegment.end < duration
+          ? (endingSegment.mode === 'remaining' && endingSegment.end < duration && duration > 0
               ? secondsToTime(duration - endingSegment.end)
               : '')
-          : '',
+          : prev.endingEnd,
         endingMode: endingSegment?.mode === 'absolute' ? 'absolute' : 'remaining',
-        autoSkip: openingSegment?.autoSkip ?? true,
-        autoNextEpisode: endingSegment?.autoNextEpisode ?? true,
+        // 🔑 使用用户全局设置，而不是配置文件中的值
+        autoSkip: userAutoSkip,
+        autoNextEpisode: userAutoNextEpisode,
       }));
     }
-  }, [skipConfig, duration, secondsToTime]);
+  }, [skipConfig, secondsToTime]); // 🔑 移除 duration 依赖，避免拉进度条时重置设置
 
   // 监听播放时间变化
   useEffect(() => {
@@ -748,7 +765,12 @@ export default function SkipController({
                   <input
                     type="checkbox"
                     checked={batchSettings.autoSkip}
-                    onChange={(e) => setBatchSettings({...batchSettings, autoSkip: e.target.checked})}
+                    onChange={(e) => {
+                      const newValue = e.target.checked;
+                      setBatchSettings({...batchSettings, autoSkip: newValue});
+                      // 🔑 保存到 localStorage，确保跨集保持
+                      localStorage.setItem('enableAutoSkip', JSON.stringify(newValue));
+                    }}
                     className="rounded"
                   />
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -761,7 +783,12 @@ export default function SkipController({
                   <input
                     type="checkbox"
                     checked={batchSettings.autoNextEpisode}
-                    onChange={(e) => setBatchSettings({...batchSettings, autoNextEpisode: e.target.checked})}
+                    onChange={(e) => {
+                      const newValue = e.target.checked;
+                      setBatchSettings({...batchSettings, autoNextEpisode: newValue});
+                      // 🔑 保存到 localStorage，确保跨集保持
+                      localStorage.setItem('enableAutoNextEpisode', JSON.stringify(newValue));
+                    }}
                     className="rounded"
                   />
                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
