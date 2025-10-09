@@ -41,28 +41,70 @@ export default function SkipController({
   const [newSegment, setNewSegment] = useState<Partial<SkipSegment>>({});
 
   // 新增状态：批量设置模式 - 支持分:秒格式
-  const [batchSettings, setBatchSettings] = useState({
-    openingStart: '0:00',   // 片头开始时间（分:秒格式）
-    openingEnd: '1:30',     // 片头结束时间（分:秒格式，90秒=1分30秒）
-    endingMode: 'remaining', // 片尾模式：'remaining'(剩余时间) 或 'absolute'(绝对时间)
-    endingStart: '2:00',    // 片尾开始时间（剩余时间模式：还剩多少时间开始倒计时；绝对时间模式：从视频开始多长时间）
-    endingEnd: '',          // 片尾结束时间（可选，空表示直接跳转下一集）
-    autoSkip: true,         // 自动跳过开关
-    autoNextEpisode: true,  // 自动下一集开关
+  // 🔑 初始化时直接从 localStorage 读取用户设置，避免重新挂载时重置为默认值
+  const [batchSettings, setBatchSettings] = useState(() => {
+    const savedEnableAutoSkip = typeof window !== 'undefined' ? localStorage.getItem('enableAutoSkip') : null;
+    const savedEnableAutoNextEpisode = typeof window !== 'undefined' ? localStorage.getItem('enableAutoNextEpisode') : null;
+    const userAutoSkip = savedEnableAutoSkip !== null ? JSON.parse(savedEnableAutoSkip) : true;
+    const userAutoNextEpisode = savedEnableAutoNextEpisode !== null ? JSON.parse(savedEnableAutoNextEpisode) : true;
+
+    console.log('🎯 [useState初始化] 从 localStorage 读取用户设置:', { userAutoSkip, userAutoNextEpisode });
+
+    return {
+      openingStart: '0:00',   // 片头开始时间（分:秒格式）
+      openingEnd: '1:30',     // 片头结束时间（分:秒格式，90秒=1分30秒）
+      endingMode: 'remaining', // 片尾模式：'remaining'(剩余时间) 或 'absolute'(绝对时间)
+      endingStart: '2:00',    // 片尾开始时间（剩余时间模式：还剩多少时间开始倒计时；绝对时间模式：从视频开始多长时间）
+      endingEnd: '',          // 片尾结束时间（可选，空表示直接跳转下一集）
+      autoSkip: userAutoSkip,         // 🔑 从 localStorage 读取
+      autoNextEpisode: userAutoNextEpisode,  // 🔑 从 localStorage 读取
+    };
   });
 
-  // 从 localStorage 读取用户全局设置
+  // 🔑 从 localStorage 读取用户全局设置，并监听变化
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window === 'undefined') return;
+
+    // 读取 localStorage 的函数
+    const loadUserSettings = () => {
       const savedEnableAutoSkip = localStorage.getItem('enableAutoSkip');
       const savedEnableAutoNextEpisode = localStorage.getItem('enableAutoNextEpisode');
+      const userAutoSkip = savedEnableAutoSkip !== null ? JSON.parse(savedEnableAutoSkip) : true;
+      const userAutoNextEpisode = savedEnableAutoNextEpisode !== null ? JSON.parse(savedEnableAutoNextEpisode) : true;
+
+      console.log('🔄 [SkipController] 读取用户设置:', { userAutoSkip, userAutoNextEpisode });
 
       setBatchSettings(prev => ({
         ...prev,
-        autoSkip: savedEnableAutoSkip !== null ? JSON.parse(savedEnableAutoSkip) : true,
-        autoNextEpisode: savedEnableAutoNextEpisode !== null ? JSON.parse(savedEnableAutoNextEpisode) : true,
+        autoSkip: userAutoSkip,
+        autoNextEpisode: userAutoNextEpisode,
       }));
-    }
+    };
+
+    // 初始化时读取一次
+    loadUserSettings();
+
+    // 🔑 监听 storage 事件（其他标签页或窗口的变化）
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'enableAutoSkip' || e.key === 'enableAutoNextEpisode') {
+        console.log('🔄 [SkipController] localStorage 变化:', e.key, e.newValue);
+        loadUserSettings();
+      }
+    };
+
+    // 🔑 监听自定义事件（同一页面内UserMenu的变化）
+    const handleLocalSettingsChange = () => {
+      console.log('🔄 [SkipController] 检测到本地设置变化');
+      loadUserSettings();
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('localStorageChanged', handleLocalSettingsChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('localStorageChanged', handleLocalSettingsChange);
+    };
   }, []);
 
   const lastSkipTimeRef = useRef<number>(0);
@@ -698,26 +740,31 @@ export default function SkipController({
       const openingSegment = skipConfig.segments.find(s => s.type === 'opening');
       const endingSegment = skipConfig.segments.find(s => s.type === 'ending');
 
+      console.log('🔄 [skipConfig变化] 同步时间字段到 batchSettings，保留 autoSkip/autoNextEpisode');
+
       // 🔑 只更新时间相关的字段，不更新 autoSkip 和 autoNextEpisode
-      setBatchSettings(prev => ({
-        ...prev,
-        openingStart: openingSegment ? secondsToTime(openingSegment.start) : prev.openingStart,
-        openingEnd: openingSegment ? secondsToTime(openingSegment.end) : prev.openingEnd,
-        endingStart: endingSegment
-          ? (endingSegment.mode === 'remaining' && endingSegment.remainingTime
-              ? secondsToTime(endingSegment.remainingTime)
-              : (duration > 0 ? secondsToTime(duration - endingSegment.start) : prev.endingStart))
-          : prev.endingStart,
-        endingEnd: endingSegment
-          ? (endingSegment.mode === 'remaining' && endingSegment.end < duration && duration > 0
-              ? secondsToTime(duration - endingSegment.end)
-              : '')
-          : prev.endingEnd,
-        endingMode: endingSegment?.mode === 'absolute' ? 'absolute' : 'remaining',
-        // 🔑 保持当前的 autoSkip 和 autoNextEpisode 不变（已经通过其他 useEffect 从 localStorage 读取）
-      }));
+      setBatchSettings(prev => {
+        console.log('🔍 [skipConfig变化] 当前 prev.autoSkip:', prev.autoSkip, 'prev.autoNextEpisode:', prev.autoNextEpisode);
+        return {
+          ...prev,
+          openingStart: openingSegment ? secondsToTime(openingSegment.start) : prev.openingStart,
+          openingEnd: openingSegment ? secondsToTime(openingSegment.end) : prev.openingEnd,
+          endingStart: endingSegment
+            ? (endingSegment.mode === 'remaining' && endingSegment.remainingTime
+                ? secondsToTime(endingSegment.remainingTime)
+                : (duration > 0 ? secondsToTime(duration - endingSegment.start) : prev.endingStart))
+            : prev.endingStart,
+          endingEnd: endingSegment
+            ? (endingSegment.mode === 'remaining' && endingSegment.end < duration && duration > 0
+                ? secondsToTime(duration - endingSegment.end)
+                : '')
+            : prev.endingEnd,
+          endingMode: endingSegment?.mode === 'absolute' ? 'absolute' : 'remaining',
+          // 🔑 保持当前的 autoSkip 和 autoNextEpisode 不变（已经通过其他 useEffect 从 localStorage 读取）
+        };
+      });
     }
-  }, [skipConfig, secondsToTime, duration]); // 🔑 保留 duration依赖，确保计算准确
+  }, [skipConfig, duration]); // 🔑 移除 secondsToTime 依赖，避免不必要的触发
 
   // 监听播放时间变化
   useEffect(() => {
@@ -797,6 +844,8 @@ export default function SkipController({
                       setBatchSettings({...batchSettings, autoSkip: newValue});
                       // 🔑 保存到 localStorage，确保跨集保持
                       localStorage.setItem('enableAutoSkip', JSON.stringify(newValue));
+                      // 🔑 通知其他组件 localStorage 已更新
+                      window.dispatchEvent(new Event('localStorageChanged'));
                     }}
                     className="rounded"
                   />
@@ -815,6 +864,8 @@ export default function SkipController({
                       setBatchSettings({...batchSettings, autoNextEpisode: newValue});
                       // 🔑 保存到 localStorage，确保跨集保持
                       localStorage.setItem('enableAutoNextEpisode', JSON.stringify(newValue));
+                      // 🔑 通知其他组件 localStorage 已更新
+                      window.dispatchEvent(new Event('localStorageChanged'));
                     }}
                     className="rounded"
                   />
