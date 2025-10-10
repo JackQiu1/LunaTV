@@ -317,29 +317,31 @@ export default function SkipController({
 
   // 自动跳过逻辑
   const handleAutoSkip = useCallback((segment: SkipSegment) => {
-    console.log('⏭️ handleAutoSkip 被调用:', segment);
+    console.log(`🔥🔥🔥 [SkipController handleAutoSkip] 被调用 - 片段类型: ${segment.type}, autoNextEpisode: ${segment.autoNextEpisode}, 时间: ${Date.now()}`);
     if (!artPlayerRef.current) {
-      console.log('❌ artPlayerRef.current 为空，无法跳过');
+      console.log('❌ [SkipController] artPlayerRef.current 为空，无法跳过');
       return;
     }
 
     // 如果是片尾且开启了自动下一集，直接跳转下一集
     if (segment.type === 'ending' && segment.autoNextEpisode && onNextEpisode) {
-      console.log('⏭️ 片尾自动跳转下一集');
+      console.log('⏭️ [SkipController] 片尾自动跳转下一集 - 准备调用 onNextEpisode()');
       // 🔑 先暂停视频，防止 video:ended 事件再次触发
       if (artPlayerRef.current) {
         if (!artPlayerRef.current.paused) {
           artPlayerRef.current.pause();
+          console.log('⏸️ [SkipController] 视频已暂停');
         }
         // 显示跳过提示
         if (artPlayerRef.current.notice) {
           artPlayerRef.current.notice.show = '自动跳转下一集';
         }
       }
-      // 延迟执行跳转，确保暂停生效
-      setTimeout(() => {
-        onNextEpisode();
-      }, 100);
+      // 🔥 关键修复：立即调用 onNextEpisode，不使用延迟
+      // onNextEpisode 内部会设置 isSkipControllerTriggeredRef 标志，必须在 video:ended 事件之前设置
+      console.log('📞 [SkipController] 即将调用 onNextEpisode()');
+      onNextEpisode();
+      console.log('✅ [SkipController] onNextEpisode() 调用完成');
     } else {
       // 否则跳到片段结束位置
       const targetTime = segment.end + 1;
@@ -441,16 +443,10 @@ export default function SkipController({
         console.log('📍 检测到片段:', { type: currentSegment.type, shouldAutoSkip, segment: currentSegment });
 
         if (shouldAutoSkip) {
-          // 自动跳过：延迟1秒执行跳过
-          if (autoSkipTimeoutRef.current) {
-            console.log('⏱️ 清除旧的 timeout');
-            clearTimeout(autoSkipTimeoutRef.current);
-          }
-          console.log('⏱️ 设置新的 timeout (1秒后执行跳过)');
-          autoSkipTimeoutRef.current = setTimeout(() => {
-            handleAutoSkip(currentSegment);
-          }, 1000);
-
+          // 🔥 关键修复：立即执行跳过，不延迟！
+          // 延迟会导致在延迟期间视频播放结束，触发 video:ended，导致跳2集
+          console.log('⏭️ 立即执行自动跳过');
+          handleAutoSkip(currentSegment);
           setShowSkipButton(false); // 自动跳过时不显示按钮
         } else {
           // 手动模式：显示跳过按钮
@@ -493,7 +489,7 @@ export default function SkipController({
         clearTimeout(skipTimeoutRef.current);
       }
 
-      // 🔑 先暂停视频并销毁播放器事件，防止 video:ended 事件再次触发
+      // 🔑 先暂停视频并显示提示，防止 video:ended 事件再次触发
       if (artPlayerRef.current) {
         if (!artPlayerRef.current.paused) {
           artPlayerRef.current.pause();
@@ -504,10 +500,9 @@ export default function SkipController({
         }
       }
 
-      // 延迟执行跳转，确保暂停生效
-      setTimeout(() => {
-        onNextEpisode();
-      }, 100);
+      // 🔥 关键修复：立即调用 onNextEpisode，不使用延迟
+      // onNextEpisode 内部会设置 isSkipControllerTriggeredRef 标志，必须在 video:ended 事件之前设置
+      onNextEpisode();
       return;
     }
 
