@@ -25,7 +25,6 @@ import {
   subscribeToDataUpdates,
 } from '@/lib/db.client';
 import { parseCustomTimeFormat } from '@/lib/time';
-import { detectDVRSupport } from '@/lib/live';
 
 import EpgScrollableRow from '@/components/EpgScrollableRow';
 import PageLayout from '@/components/PageLayout';
@@ -154,15 +153,10 @@ function LivePageClient() {
   const favoritedRef = useRef(false);
   const currentChannelRef = useRef<LiveChannel | null>(null);
 
-  // 直播播放模式：'auto' 自动检测，'live' 强制直播模式，'dvr' 强制回放模式
-  const [livePlaybackMode, setLivePlaybackMode] = useState<'auto' | 'live' | 'dvr'>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('livePlaybackMode');
-      return (saved as 'auto' | 'live' | 'dvr') || 'auto';
-    }
-    return 'auto';
-  });
-  const [supportsDVR, setSupportsDVR] = useState(false);
+  // DVR 回放检测状态
+  const [dvrDetected, setDvrDetected] = useState(false);
+  const [dvrSeekableRange, setDvrSeekableRange] = useState(0);
+  const [enableDvrMode, setEnableDvrMode] = useState(false); // 用户手动启用DVR模式
 
   // EPG数据清洗函数 - 去除重叠的节目，保留时间较短的，只显示今日节目
   const cleanEpgData = (programs: Array<{ start: string; end: string; title: string }>) => {
@@ -1247,28 +1241,6 @@ function LivePageClient() {
 
       const customType = { m3u8: m3u8Loader };
       const targetUrl = `/api/proxy/m3u8?url=${encodeURIComponent(videoUrl)}&moontv-source=${currentSourceRef.current?.key || ''}`;
-
-      // 检测是否支持 DVR/时移功能
-      let isDVRSupported = false;
-      if (livePlaybackMode === 'auto') {
-        try {
-          isDVRSupported = await detectDVRSupport(targetUrl, currentSourceRef.current?.ua);
-          setSupportsDVR(isDVRSupported);
-          console.log('DVR检测结果:', isDVRSupported ? '支持回放' : '纯直播');
-        } catch (error) {
-          console.error('DVR检测失败:', error);
-        }
-      }
-
-      // 根据模式决定 isLive 设置
-      let isLiveMode = true;
-      if (livePlaybackMode === 'dvr') {
-        isLiveMode = false; // 强制回放模式
-      } else if (livePlaybackMode === 'auto') {
-        isLiveMode = !isDVRSupported; // 自动：如果支持DVR则显示进度条
-      }
-      // livePlaybackMode === 'live' 时保持 isLiveMode = true
-
       try {
         // 使用动态导入的 Artplayer
         const Artplayer = (window as any).DynamicArtplayer;
@@ -1282,7 +1254,7 @@ function LivePageClient() {
           url: targetUrl,
           poster: currentChannel.logo,
           volume: 0.7,
-          isLive: isLiveMode, // 根据检测结果或用户设置动态设置
+          isLive: !enableDvrMode, // 根据用户设置决定是否为直播模式
           muted: false,
           autoplay: true,
           pip: true,
@@ -1325,6 +1297,34 @@ function LivePageClient() {
           setError(null);
           setIsVideoLoading(false);
 
+          // 延迟检测是否支持 DVR/时移回放（仅在未启用DVR模式时检测）
+          if (!enableDvrMode) {
+            setTimeout(() => {
+              if (artPlayerRef.current && artPlayerRef.current.video) {
+                const video = artPlayerRef.current.video;
+
+                try {
+                  if (video.seekable && video.seekable.length > 0) {
+                    const seekableEnd = video.seekable.end(0);
+                    const seekableStart = video.seekable.start(0);
+                    const seekableRange = seekableEnd - seekableStart;
+
+                    // 如果可拖动范围大于60秒，说明支持回放
+                    if (seekableRange > 60) {
+                      console.log('✓ 检测到支持回放，可拖动范围:', Math.floor(seekableRange), '秒');
+                      setDvrDetected(true);
+                      setDvrSeekableRange(Math.floor(seekableRange));
+                    } else {
+                      console.log('✗ 纯直播流，可拖动范围:', Math.floor(seekableRange), '秒');
+                      setDvrDetected(false);
+                    }
+                  }
+                } catch (error) {
+                  console.log('DVR检测失败:', error);
+                }
+              }
+            }, 3000); // 等待3秒让HLS加载足够的片段
+          }
         });
 
         artPlayerRef.current.on('loadstart', () => {
@@ -1682,6 +1682,50 @@ function LivePageClient() {
                   </div>
                 )}
 
+                {/* DVR 回放支持提示 */}
+                {dvrDetected && (
+                  <div className='absolute top-4 left-4 right-4 bg-gradient-to-r from-blue-500/90 to-cyan-500/90 backdrop-blur-sm rounded-lg px-4 py-3 shadow-lg z-[550] animate-in fade-in slide-in-from-top-2 duration-300'>
+                    <div className='flex items-center justify-between'>
+                      <div className='flex items-center gap-3 flex-1'>
+                        <div className='flex-shrink-0'>
+                          <div className='w-8 h-8 bg-white/20 rounded-full flex items-center justify-center'>
+                            <span className='text-lg'>⏯️</span>
+                          </div>
+                        </div>
+                        <div className='flex-1 min-w-0'>
+                          <p className='text-sm font-semibold text-white'>
+                            此频道支持回放功能
+                          </p>
+                          <p className='text-xs text-white/90 mt-0.5'>
+                            可拖动范围: {Math.floor(dvrSeekableRange / 60)} 分钟
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          // 启用DVR模式并重新加载播放器
+                          setEnableDvrMode(true);
+                          setDvrDetected(false); // 隐藏提示
+                          if (currentChannel) {
+                            const currentUrl = currentChannel.url;
+                            setVideoUrl('');
+                            setTimeout(() => setVideoUrl(currentUrl), 100);
+                          }
+                        }}
+                        className='ml-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white text-xs font-medium rounded transition-colors whitespace-nowrap'
+                      >
+                        启用进度条
+                      </button>
+                      <button
+                        onClick={() => setDvrDetected(false)}
+                        className='ml-2 p-1 hover:bg-white/20 rounded transition-colors'
+                      >
+                        <X className='w-4 h-4 text-white' />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* 视频加载蒙层 */}
                 {isVideoLoading && (
                   <div className='absolute inset-0 bg-black/85 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/0 dark:border-white/30 flex items-center justify-center z-[500] transition-all duration-300'>
@@ -2019,55 +2063,8 @@ function LivePageClient() {
                           </div>
                         )}
                       </div>
-
-                      {/* 播放模式控制 */}
-                      <div className='pt-3 border-t border-gray-200 dark:border-gray-700'>
-                        <div className='flex items-center gap-3'>
-                          <label className='text-sm text-gray-700 dark:text-gray-300 whitespace-nowrap'>
-                            进度条模式
-                          </label>
-                          <select
-                            value={livePlaybackMode}
-                            onChange={(e) => {
-                              const mode = e.target.value as 'auto' | 'live' | 'dvr';
-                              setLivePlaybackMode(mode);
-                              localStorage.setItem('livePlaybackMode', mode);
-                              // 模式切换后需要重新加载播放器
-                              if (currentChannel && videoUrl) {
-                                setVideoUrl('');
-                                setTimeout(() => setVideoUrl(currentChannel.url), 100);
-                              }
-                            }}
-                            className='flex-1 text-xs px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100'
-                          >
-                            <option value='auto'>自动检测</option>
-                            <option value='live'>强制直播</option>
-                            <option value='dvr'>强制回放</option>
-                          </select>
-                        </div>
-                        {livePlaybackMode === 'auto' && supportsDVR && (
-                          <div className='mt-2 text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-2 py-1.5 rounded'>
-                            ✓ 检测到支持回放，已启用进度条
-                          </div>
-                        )}
-                        {livePlaybackMode === 'auto' && !supportsDVR && currentChannel && (
-                          <div className='mt-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-2 py-1.5 rounded'>
-                            未检测到回放支持，使用直播模式
-                          </div>
-                        )}
-                        {livePlaybackMode === 'dvr' && (
-                          <div className='mt-2 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-1.5 rounded'>
-                            强制回放模式，进度条已启用
-                          </div>
-                        )}
-                        {livePlaybackMode === 'live' && (
-                          <div className='mt-2 text-xs text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 px-2 py-1.5 rounded'>
-                            强制直播模式，进度条已隐藏
-                          </div>
-                        )}
-                      </div>
                     </div>
-
+                    
                     <div className='flex-1 overflow-y-auto space-y-2 pb-20'>
                       {liveSources.length > 0 ? (
                         liveSources.map((source) => {
