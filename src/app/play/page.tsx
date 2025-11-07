@@ -1209,378 +1209,158 @@ function PlayPageClient() {
   };
 
   // ============================================================================
-  // 增强广告过滤逻辑 - Enhanced Ad Filtering System
+  // 智能广告过滤系统 - Smart Ad Filtering System
+  // 基于行业标准广告标记和URL模式检测
   // ============================================================================
 
-  // M3U8 段落类型定义
-  interface M3U8Segment {
-    duration: number;
-    url: string;
-    index: number;
-    hasDiscontinuity?: boolean;
-  }
-
-  // M3U8 文件头部信息
-  interface M3U8Headers {
-    version?: string;
-    targetDuration?: number;
-    mediaSequence?: number;
-    playlistType?: string;
-    otherHeaders: string[];
-  }
-
-  // 统计数据结构
-  interface M3U8Stats {
-    mean: number;
-    stdDev: number;
-    median: number;
-    q1: number;
-    q3: number;
-    min: number;
-    max: number;
-  }
-
   /**
-   * 计算数组的统计数据
+   * 检查 URL 是否包含广告关键词
    */
-  function calculateStats(durations: number[]): M3U8Stats {
-    if (durations.length === 0) {
-      return { mean: 0, stdDev: 0, median: 0, q1: 0, q3: 0, min: 0, max: 0 };
-    }
+  function isAdUrl(url: string): boolean {
+    const adKeywords = [
+      '/ad/', '/ads/', '/advert/', '/commercial/',
+      'doubleclick', 'googlesyndication', 'advertising',
+      'ad-', 'ads-', '-ad-', '-ads-',
+      'adserver', 'adservice'
+    ];
 
-    const sorted = [...durations].sort((a, b) => a - b);
-    const sum = durations.reduce((a, b) => a + b, 0);
-    const mean = sum / durations.length;
-
-    const variance =
-      durations.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) /
-      durations.length;
-    const stdDev = Math.sqrt(variance);
-
-    const median = sorted[Math.floor(sorted.length / 2)];
-    const q1 = sorted[Math.floor(sorted.length / 4)];
-    const q3 = sorted[Math.floor((sorted.length * 3) / 4)];
-
-    return {
-      mean,
-      stdDev,
-      median,
-      q1,
-      q3,
-      min: sorted[0],
-      max: sorted[sorted.length - 1],
-    };
+    const lowerUrl = url.toLowerCase();
+    return adKeywords.some(keyword => lowerUrl.includes(keyword));
   }
 
   /**
-   * 解析 M3U8 文件为段落数组
+   * 检测常见广告时长模式（15秒、30秒、60秒等）
    */
-  function parseM3U8ToSegments(m3u8Content: string): {
-    segments: M3U8Segment[];
-    headers: M3U8Headers;
-  } {
-    const lines = m3u8Content.split('\n').filter((line) => line.trim());
-    const segments: M3U8Segment[] = [];
-    const headers: M3U8Headers = {
-      otherHeaders: [],
-    };
+  function isAdDuration(duration: number): boolean {
+    const commonAdDurations = [15, 30, 60];
+    const tolerance = 1; // 允许1秒误差
 
-    let currentIndex = 0;
-    let hasDiscontinuity = false;
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-
-      // 解析头部信息
-      if (line.startsWith('#EXT-X-VERSION:')) {
-        headers.version = line;
-        continue;
-      }
-      if (line.startsWith('#EXT-X-TARGETDURATION:')) {
-        headers.targetDuration = parseFloat(line.split(':')[1]);
-        headers.otherHeaders.push(line);
-        continue;
-      }
-      if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
-        headers.mediaSequence = parseInt(line.split(':')[1]);
-        headers.otherHeaders.push(line);
-        continue;
-      }
-      if (line.startsWith('#EXT-X-PLAYLIST-TYPE:')) {
-        headers.playlistType = line;
-        headers.otherHeaders.push(line);
-        continue;
-      }
-
-      // 检测 DISCONTINUITY 标记
-      if (line.includes('#EXT-X-DISCONTINUITY')) {
-        hasDiscontinuity = true;
-        continue;
-      }
-
-      // 解析段落信息
-      if (line.startsWith('#EXTINF:')) {
-        const durationMatch = line.match(/#EXTINF:([\d.]+)/);
-        if (durationMatch && i + 1 < lines.length) {
-          const duration = parseFloat(durationMatch[1]);
-          const url = lines[i + 1].trim();
-
-          if (url && !url.startsWith('#')) {
-            segments.push({
-              duration,
-              url,
-              index: currentIndex++,
-              hasDiscontinuity,
-            });
-            hasDiscontinuity = false; // 重置标记
-            i++; // 跳过URL行
-          }
-        }
-      } else if (line.startsWith('#') && !line.startsWith('#EXTM3U')) {
-        // 其他头部信息
-        if (
-          !line.startsWith('#EXT-X-VERSION') &&
-          !line.startsWith('#EXT-X-TARGETDURATION') &&
-          !line.startsWith('#EXT-X-MEDIA-SEQUENCE') &&
-          !line.startsWith('#EXT-X-PLAYLIST-TYPE')
-        ) {
-          headers.otherHeaders.push(line);
-        }
-      }
-    }
-
-    return { segments, headers };
+    return commonAdDurations.some(
+      adDuration => Math.abs(duration - adDuration) < tolerance
+    );
   }
 
   /**
-   * 多维度分析段落，标记潜在广告
-   */
-  function analyzeSegmentsForAds(
-    segments: M3U8Segment[],
-    stats: M3U8Stats
-  ): Set<number> {
-    const suspiciousIndices = new Set<number>();
-
-    if (segments.length === 0) return suspiciousIndices;
-
-    // 1. 基于 Z-Score 的时长异常检测
-    const zScoreThreshold = 2.0; // Z-Score 阈值
-    segments.forEach((seg) => {
-      if (stats.stdDev > 0) {
-        const zScore = Math.abs((seg.duration - stats.mean) / stats.stdDev);
-        if (zScore > zScoreThreshold) {
-          suspiciousIndices.add(seg.index);
-        }
-      }
-    });
-
-    // 2. 位置因子（开头和结尾更可能是广告）
-    const headTailThreshold = Math.min(3, Math.ceil(segments.length * 0.1));
-    for (let i = 0; i < headTailThreshold; i++) {
-      if (segments[i].hasDiscontinuity) {
-        suspiciousIndices.add(segments[i].index);
-      }
-      const tailIndex = segments.length - 1 - i;
-      if (segments[tailIndex].hasDiscontinuity) {
-        suspiciousIndices.add(segments[tailIndex].index);
-      }
-    }
-
-    // 3. DISCONTINUITY 标记检测（强烈的广告信号）
-    segments.forEach((seg) => {
-      if (seg.hasDiscontinuity) {
-        suspiciousIndices.add(seg.index);
-      }
-    });
-
-    return suspiciousIndices;
-  }
-
-  /**
-   * 重建 M3U8 文件
-   */
-  function rebuildM3U8(
-    segments: M3U8Segment[],
-    headers: M3U8Headers,
-    removedIndices: Set<number>
-  ): string {
-    const lines: string[] = ['#EXTM3U'];
-
-    // 添加版本信息
-    if (headers.version) {
-      lines.push(headers.version);
-    }
-
-    // 添加其他头部信息
-    headers.otherHeaders.forEach((header) => {
-      lines.push(header);
-    });
-
-    // 添加段落信息（排除被标记的段落）
-    segments.forEach((seg) => {
-      if (!removedIndices.has(seg.index)) {
-        lines.push(`#EXTINF:${seg.duration.toFixed(3)},`);
-        lines.push(seg.url);
-      }
-    });
-
-    // 添加结束标记（如果原始文件有的话）
-    lines.push('#EXT-X-ENDLIST');
-
-    return lines.join('\n');
-  }
-
-  /**
-   * 超级 M3U8 广告过滤器（三阶段处理）
-   */
-  function SuperFilterAdsFromM3U8(m3u8Content: string): string {
-    if (!m3u8Content || !m3u8Content.includes('#EXTM3U')) {
-      return m3u8Content;
-    }
-
-    try {
-      // 阶段1: 预处理 - 解析M3U8文件
-      const { segments, headers } = parseM3U8ToSegments(m3u8Content);
-
-      if (segments.length === 0) {
-        return m3u8Content; // 无有效段落，返回原始内容
-      }
-
-      // 阶段2: 分析 - 计算统计数据并检测广告
-      const durations = segments.map((s) => s.duration);
-      const stats = calculateStats(durations);
-
-      // 智能阈值判断：如果标准差很小，说明视频片段比较均匀，可以更激进地过滤
-      const suspiciousIndices = analyzeSegmentsForAds(segments, stats);
-
-      // 如果检测到的可疑段落过多（>30%），可能是误判，返回原始内容
-      if (suspiciousIndices.size > segments.length * 0.3) {
-        console.warn(
-          '检测到过多可疑片段，可能误判，跳过过滤:',
-          suspiciousIndices.size,
-          '/',
-          segments.length
-        );
-        return m3u8Content;
-      }
-
-      // 阶段3: 重建 - 构建过滤后的M3U8
-      const filteredM3U8 = rebuildM3U8(segments, headers, suspiciousIndices);
-
-      console.log(
-        `广告过滤统计: 移除 ${suspiciousIndices.size}/${segments.length} 个可疑片段`
-      );
-
-      return filteredM3U8;
-    } catch (error) {
-      console.error('SuperFilterAdsFromM3U8 处理失败:', error);
-      return m3u8Content; // 出错时返回原始内容
-    }
-  }
-
-  /**
-   * 计算两个字符串之间的 Levenshtein 距离（编辑距离）
-   */
-  function levenshteinDistance(str1: string, str2: string): number {
-    const len1 = str1.length;
-    const len2 = str2.length;
-    const dp: number[][] = Array(len1 + 1)
-      .fill(null)
-      .map(() => Array(len2 + 1).fill(0));
-
-    for (let i = 0; i <= len1; i++) dp[i][0] = i;
-    for (let j = 0; j <= len2; j++) dp[0][j] = j;
-
-    for (let i = 1; i <= len1; i++) {
-      for (let j = 1; j <= len2; j++) {
-        if (str1[i - 1] === str2[j - 1]) {
-          dp[i][j] = dp[i - 1][j - 1];
-        } else {
-          dp[i][j] = Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]) + 1;
-        }
-      }
-    }
-
-    return dp[len1][len2];
-  }
-
-  /**
-   * 高级广告过滤（基于 URL 相似度）
-   */
-  function advancedFilterM3U8Lines(m3u8Content: string): string {
-    if (!m3u8Content) return '';
-
-    const lines = m3u8Content.split('\n');
-    const urls: string[] = [];
-    const urlIndices: number[] = [];
-
-    // 提取所有URL及其行号
-    lines.forEach((line, index) => {
-      if (line.trim() && !line.startsWith('#')) {
-        urls.push(line.trim());
-        urlIndices.push(index);
-      }
-    });
-
-    if (urls.length === 0) return m3u8Content;
-
-    // 计算URL之间的相似度，找出异常URL
-    const suspiciousUrlIndices = new Set<number>();
-    const avgLength = urls.reduce((sum, url) => sum + url.length, 0) / urls.length;
-
-    urls.forEach((url, i) => {
-      // 长度异常检测
-      if (Math.abs(url.length - avgLength) > avgLength * 0.5) {
-        suspiciousUrlIndices.add(urlIndices[i]);
-      }
-
-      // 与相邻URL的相似度检测
-      if (i > 0) {
-        const prevUrl = urls[i - 1];
-        const distance = levenshteinDistance(url, prevUrl);
-        const maxLen = Math.max(url.length, prevUrl.length);
-
-        // 如果编辑距离超过50%，认为是异常URL
-        if (distance / maxLen > 0.5) {
-          suspiciousUrlIndices.add(urlIndices[i]);
-        }
-      }
-    });
-
-    // 过滤掉可疑的URL及其对应的 #EXTINF 行
-    const filteredLines: string[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      if (suspiciousUrlIndices.has(i)) {
-        // 跳过可疑URL
-        if (i > 0 && lines[i - 1].startsWith('#EXTINF:')) {
-          filteredLines.pop(); // 同时移除对应的 #EXTINF 行
-        }
-        continue;
-      }
-      filteredLines.push(lines[i]);
-    }
-
-    return filteredLines.join('\n');
-  }
-
-  /**
-   * 主过滤函数 - 双层过滤策略
+   * 智能广告过滤 - 综合多种检测方法
+   * 1. 检测行业标准广告标记（EXT-X-CUE-OUT/IN, DATERANGE, SCTE35）
+   * 2. 检测 DISCONTINUITY + 广告时长模式
+   * 3. 检测 URL 中的广告关键词
    */
   function filterAdsFromM3U8(m3u8Content: string): string {
     if (!m3u8Content) return '';
 
-    try {
-      // 第一层：基于 URL 相似度的高级过滤
-      const firstPass = advancedFilterM3U8Lines(m3u8Content);
+    const lines = m3u8Content.split('\n');
+    const filteredLines: string[] = [];
 
-      // 第二层：基于多维度分析的超级过滤
-      const finalPass = SuperFilterAdsFromM3U8(firstPass);
+    let inAdBlock = false; // 是否在广告区块内
+    let skipNextUrl = false; // 是否跳过下一个 URL 行
+    let adSegmentCount = 0; // 移除的广告片段数量
 
-      return finalPass;
-    } catch (error) {
-      console.error('广告过滤失败，返回原始内容:', error);
-      return m3u8Content;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+
+      // 1. 检测明确的广告标记标签（行业标准）
+      if (
+        trimmedLine.includes('#EXT-X-CUE-OUT') ||
+        trimmedLine.includes('#EXT-X-CUE') ||
+        trimmedLine.startsWith('#EXT-X-DATERANGE') ||
+        trimmedLine.includes('SCTE35') ||
+        trimmedLine.includes('#EXT-OATCLS-SCTE35')
+      ) {
+        inAdBlock = true;
+        adSegmentCount++;
+        continue; // 跳过广告标记行
+      }
+
+      // 2. 检测广告结束标记
+      if (trimmedLine.includes('#EXT-X-CUE-IN')) {
+        inAdBlock = false;
+        continue;
+      }
+
+      // 3. 如果在广告区块内，跳过所有内容
+      if (inAdBlock) {
+        // 统计跳过的片段
+        if (trimmedLine.startsWith('#EXTINF:')) {
+          adSegmentCount++;
+        }
+        continue;
+      }
+
+      // 4. 检测 DISCONTINUITY 标记（可能是广告插入点）
+      if (trimmedLine.includes('#EXT-X-DISCONTINUITY')) {
+        // 检查接下来的片段是否有广告特征
+        let hasAdCharacteristics = false;
+
+        // 向前看最多3行，检测广告特征
+        for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+          const nextLine = lines[j].trim();
+
+          // 检查 EXTINF 行的时长
+          if (nextLine.startsWith('#EXTINF:')) {
+            const durationMatch = nextLine.match(/#EXTINF:([\d.]+)/);
+            if (durationMatch) {
+              const duration = parseFloat(durationMatch[1]);
+              if (isAdDuration(duration)) {
+                hasAdCharacteristics = true;
+                break;
+              }
+            }
+          }
+
+          // 检查 URL 是否包含广告关键词
+          if (!nextLine.startsWith('#') && nextLine.length > 0) {
+            if (isAdUrl(nextLine)) {
+              hasAdCharacteristics = true;
+              break;
+            }
+            break; // 找到 URL 后就停止
+          }
+        }
+
+        if (hasAdCharacteristics) {
+          skipNextUrl = true;
+          adSegmentCount++;
+          continue; // 跳过 DISCONTINUITY
+        }
+      }
+
+      // 5. 检查 URL 行是否包含广告关键词
+      if (!trimmedLine.startsWith('#') && trimmedLine.length > 0) {
+        if (isAdUrl(trimmedLine)) {
+          // 同时移除前一行的 #EXTINF（如果存在）
+          if (filteredLines.length > 0 &&
+              filteredLines[filteredLines.length - 1].trim().startsWith('#EXTINF:')) {
+            filteredLines.pop();
+          }
+          skipNextUrl = false;
+          adSegmentCount++;
+          continue;
+        }
+
+        // 如果标记为跳过，则跳过此 URL
+        if (skipNextUrl) {
+          // 同时移除前一行的 #EXTINF（如果存在）
+          if (filteredLines.length > 0 &&
+              filteredLines[filteredLines.length - 1].trim().startsWith('#EXTINF:')) {
+            filteredLines.pop();
+          }
+          skipNextUrl = false;
+          continue;
+        }
+      }
+
+      // 6. 保留非广告内容
+      filteredLines.push(line);
     }
+
+    // 输出过滤统计
+    if (adSegmentCount > 0) {
+      console.log(`✅ 广告过滤: 移除 ${adSegmentCount} 个广告片段`);
+    }
+
+    return filteredLines.join('\n');
   }
 
   const formatTime = (seconds: number): string => {
@@ -2162,7 +1942,8 @@ function PlayPageClient() {
         }
 
         // 如果有 shortdrama_id，额外添加短剧源到可用源列表
-        if (shortdramaId) {
+        // 但只有在没有指定其他源时才添加，避免电影等内容错误加载短剧源
+        if (shortdramaId && !currentSource && !currentId) {
           try {
             const shortdramaSource = await fetchSourceDetail('shortdrama', shortdramaId);
             if (shortdramaSource.length > 0) {
@@ -3877,6 +3658,129 @@ function PlayPageClient() {
             console.error('保存弹幕配置失败:', error);
           }
         });
+
+        // ============================================================================
+        // 视频播放器悬浮广告屏蔽系统
+        // ============================================================================
+
+        // 添加CSS来隐藏常见的悬浮广告元素
+        const adBlockerStyles = document.createElement('style');
+        adBlockerStyles.id = 'video-ad-blocker-styles';
+        adBlockerStyles.textContent = `
+          /* 屏蔽播放器内的悬浮广告 */
+          .art-video-player .ad-overlay,
+          .art-video-player .video-ad,
+          .art-video-player .player-ad,
+          .art-video-player [class*="ad-banner"],
+          .art-video-player [class*="ad-overlay"],
+          .art-video-player [class*="advertisement"],
+          .art-video-player [id*="ad-banner"],
+          .art-video-player [id*="ad-overlay"],
+          .art-video-player iframe[src*="doubleclick"],
+          .art-video-player iframe[src*="googlesyndication"],
+          .art-video-player iframe[src*="/ad/"],
+          .art-video-player iframe[src*="/ads/"],
+          .art-video-player div[style*="z-index: 999"],
+          .art-video-player div[style*="z-index: 9999"] {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+          }
+
+          /* 屏蔽暂停时的广告 */
+          .art-video-player .pause-ad,
+          .art-video-player .pause-overlay,
+          .art-video-player [class*="pause-ad"] {
+            display: none !important;
+          }
+        `;
+
+        // 添加样式到页面
+        if (!document.getElementById('video-ad-blocker-styles')) {
+          document.head.appendChild(adBlockerStyles);
+          console.log('✅ 播放器广告屏蔽CSS已加载');
+        }
+
+        // 监控并移除动态插入的广告元素
+        const removeOverlayAds = () => {
+          if (!artRef.current) return;
+
+          const adSelectors = [
+            '[class*="ad-overlay"]',
+            '[class*="ad-banner"]',
+            '[class*="advertisement"]',
+            '[id*="ad-banner"]',
+            '[id*="ad-overlay"]',
+            'iframe[src*="doubleclick"]',
+            'iframe[src*="googlesyndication"]',
+            'iframe[src*="/ad/"]',
+            'iframe[src*="/ads/"]',
+            '.pause-ad',
+            '.video-ad',
+            '.player-ad'
+          ];
+
+          let removedCount = 0;
+          adSelectors.forEach(selector => {
+            const elements = artRef.current?.querySelectorAll(selector);
+            elements?.forEach(el => {
+              if (el && el.parentNode) {
+                el.remove();
+                removedCount++;
+              }
+            });
+          });
+
+          if (removedCount > 0) {
+            console.log(`✅ 移除了 ${removedCount} 个悬浮广告元素`);
+          }
+        };
+
+        // 初始检查
+        setTimeout(removeOverlayAds, 1000);
+
+        // 定期检查（每5秒）
+        const adBlockerInterval = setInterval(removeOverlayAds, 5000);
+
+        // 使用MutationObserver监听DOM变化
+        if (artRef.current) {
+          const observer = new MutationObserver((mutations) => {
+            let hasAdLikeElements = false;
+
+            mutations.forEach((mutation) => {
+              mutation.addedNodes.forEach((node) => {
+                if (node.nodeType === 1) { // Element node
+                  const element = node as Element;
+                  const className = element.className?.toString().toLowerCase() || '';
+                  const id = element.id?.toLowerCase() || '';
+
+                  // 检测是否是广告相关元素
+                  if (className.includes('ad') || id.includes('ad') ||
+                      element.tagName === 'IFRAME') {
+                    hasAdLikeElements = true;
+                  }
+                }
+              });
+            });
+
+            if (hasAdLikeElements) {
+              removeOverlayAds();
+            }
+          });
+
+          observer.observe(artRef.current, {
+            childList: true,
+            subtree: true
+          });
+
+          // 清理函数
+          artPlayerRef.current.on('destroy', () => {
+            observer.disconnect();
+            clearInterval(adBlockerInterval);
+            console.log('广告屏蔽监听已停止');
+          });
+        }
 
         // 监听播放进度跳转，优化弹幕重置（减少闪烁）
         artPlayerRef.current.on('seek', () => {
