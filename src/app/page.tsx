@@ -172,7 +172,7 @@ function HomeClient() {
             getDoubanCategories({ kind: 'tv', category: 'show', type: 'show' }),
             getRecommendedShortDramas(undefined, 8),
             GetBangumiCalendarData(),
-            fetch('/api/release-calendar?limit=20').then(res => {
+            fetch('/api/release-calendar?limit=100').then(res => {
               if (!res.ok) {
                 console.error('获取即将上映数据失败，状态码:', res.status);
                 return { items: [] };
@@ -356,20 +356,29 @@ function HomeClient() {
           const releases = upcomingReleasesData.value.items;
           console.log('📅 获取到的即将上映数据:', releases.length, '条');
 
-          // 过滤出未来上映的作品（未来90天内）
+          // 过滤出即将上映和刚上映的作品（过去7天到未来90天）
           const today = new Date();
           today.setHours(0, 0, 0, 0);
+          const sevenDaysAgo = new Date(today);
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
           const ninetyDaysLater = new Date(today);
           ninetyDaysLater.setDate(ninetyDaysLater.getDate() + 90);
 
+          console.log('📅 7天前日期:', sevenDaysAgo.toISOString().split('T')[0]);
           console.log('📅 今天日期:', today.toISOString().split('T')[0]);
           console.log('📅 90天后日期:', ninetyDaysLater.toISOString().split('T')[0]);
 
           const upcoming = releases.filter((item: ReleaseCalendarItem) => {
-            const releaseDate = new Date(item.releaseDate);
-            const isUpcoming = releaseDate >= today && releaseDate <= ninetyDaysLater;
+            // 修复时区问题：使用字符串比较而不是Date对象比较
+            const releaseDateStr = item.releaseDate; // 格式: "2025-11-07"
+            const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
+            const ninetyDaysStr = ninetyDaysLater.toISOString().split('T')[0];
+            const isUpcoming = releaseDateStr >= sevenDaysAgoStr && releaseDateStr <= ninetyDaysStr;
             return isUpcoming;
           });
+
+          console.log('📅 日期过滤后的数据:', upcoming.length, '条');
+          console.log('📅 过滤后的标题:', upcoming.map((i: ReleaseCalendarItem) => `${i.title} (${i.releaseDate})`));
 
           // 去重：基于标题去重，保留最早的那条记录
           const uniqueUpcoming = upcoming.reduce((acc: ReleaseCalendarItem[], current: ReleaseCalendarItem) => {
@@ -387,7 +396,92 @@ function HomeClient() {
           }, []);
 
           console.log('📅 去重后的即将上映数据:', uniqueUpcoming.length, '条');
-          setUpcomingReleases(uniqueUpcoming.slice(0, 10)); // 最多显示10个
+
+          // 智能分配：按更细的时间段分类，确保时间分散
+          const todayStr = today.toISOString().split('T')[0];
+          const sevenDaysLaterStr = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          const thirtyDaysLaterStr = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+          // 更细致的时间段划分
+          const recentlyReleased = uniqueUpcoming.filter((i: ReleaseCalendarItem) => i.releaseDate < todayStr); // 已上映
+          const releasingToday = uniqueUpcoming.filter((i: ReleaseCalendarItem) => i.releaseDate === todayStr); // 今日上映
+          const nextSevenDays = uniqueUpcoming.filter((i: ReleaseCalendarItem) => i.releaseDate > todayStr && i.releaseDate <= sevenDaysLaterStr); // 未来7天
+          const nextThirtyDays = uniqueUpcoming.filter((i: ReleaseCalendarItem) => i.releaseDate > sevenDaysLaterStr && i.releaseDate <= thirtyDaysLaterStr); // 8-30天
+          const laterReleasing = uniqueUpcoming.filter((i: ReleaseCalendarItem) => i.releaseDate > thirtyDaysLaterStr); // 30天后
+
+          // 智能分配：总共10个，按时间段分散选取
+          const maxTotal = 10;
+          let selectedItems: ReleaseCalendarItem[] = [];
+
+          // 配额分配策略：2已上映 + 1今日(限制) + 4近期(7天) + 2中期(30天) + 1远期
+          // 今日上映限制最多3个，避免全是今天的
+          const maxTodayLimit = 3;
+          const recentQuota = Math.min(2, recentlyReleased.length);
+          const todayQuota = Math.min(1, releasingToday.length);
+          const sevenDayQuota = Math.min(4, nextSevenDays.length);
+          const thirtyDayQuota = Math.min(2, nextThirtyDays.length);
+          const laterQuota = Math.min(1, laterReleasing.length);
+
+          selectedItems = [
+            ...recentlyReleased.slice(0, recentQuota),
+            ...releasingToday.slice(0, todayQuota),
+            ...nextSevenDays.slice(0, sevenDayQuota),
+            ...nextThirtyDays.slice(0, thirtyDayQuota),
+            ...laterReleasing.slice(0, laterQuota),
+          ];
+
+          // 如果没填满10个，按优先级补充（但限制今日上映总数）
+          if (selectedItems.length < maxTotal) {
+            const remaining = maxTotal - selectedItems.length;
+            const currentTodayCount = selectedItems.filter((i: ReleaseCalendarItem) => i.releaseDate === todayStr).length;
+
+            // 优先从近期7天补充
+            const additionalSeven = nextSevenDays.slice(sevenDayQuota, sevenDayQuota + remaining);
+            selectedItems = [...selectedItems, ...additionalSeven];
+
+            // 还不够就从30天内补充
+            if (selectedItems.length < maxTotal) {
+              const stillRemaining = maxTotal - selectedItems.length;
+              const additionalThirty = nextThirtyDays.slice(thirtyDayQuota, thirtyDayQuota + stillRemaining);
+              selectedItems = [...selectedItems, ...additionalThirty];
+            }
+
+            // 还不够就从远期补充
+            if (selectedItems.length < maxTotal) {
+              const stillRemaining = maxTotal - selectedItems.length;
+              const additionalLater = laterReleasing.slice(laterQuota, laterQuota + stillRemaining);
+              selectedItems = [...selectedItems, ...additionalLater];
+            }
+
+            // 还不够就从已上映补充
+            if (selectedItems.length < maxTotal) {
+              const stillRemaining = maxTotal - selectedItems.length;
+              const additionalRecent = recentlyReleased.slice(recentQuota, recentQuota + stillRemaining);
+              selectedItems = [...selectedItems, ...additionalRecent];
+            }
+
+            // 最后实在不够才从今日上映补充（但限制总数不超过maxTodayLimit）
+            if (selectedItems.length < maxTotal) {
+              const currentTodayCount = selectedItems.filter((i: ReleaseCalendarItem) => i.releaseDate === todayStr).length;
+              const todayRemaining = maxTodayLimit - currentTodayCount;
+              if (todayRemaining > 0) {
+                const stillRemaining = Math.min(maxTotal - selectedItems.length, todayRemaining);
+                const additionalToday = releasingToday.slice(todayQuota, todayQuota + stillRemaining);
+                selectedItems = [...selectedItems, ...additionalToday];
+              }
+            }
+          }
+
+          console.log('📅 分配结果:', {
+            已上映: recentlyReleased.length,
+            今日上映: releasingToday.length,
+            '7天内': nextSevenDays.length,
+            '8-30天': nextThirtyDays.length,
+            '30天后': laterReleasing.length,
+            最终显示: selectedItems.length
+          });
+
+          setUpcomingReleases(selectedItems);
         } else {
           console.warn('获取即将上映数据失败:', upcomingReleasesData.status === 'rejected' ? upcomingReleasesData.reason : '数据格式错误');
           setUpcomingReleases([]);
@@ -705,7 +799,17 @@ function HomeClient() {
                       const today = new Date();
                       today.setHours(0, 0, 0, 0);
                       const releaseDate = new Date(release.releaseDate);
-                      const daysUntilRelease = Math.ceil((releaseDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                      const daysDiff = Math.ceil((releaseDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+                      // 根据天数差异显示不同文字
+                      let remarksText;
+                      if (daysDiff < 0) {
+                        remarksText = `已上映${Math.abs(daysDiff)}天`;
+                      } else if (daysDiff === 0) {
+                        remarksText = '今日上映';
+                      } else {
+                        remarksText = `${daysDiff}天后上映`;
+                      }
 
                       return (
                         <div
@@ -721,7 +825,7 @@ function HomeClient() {
                             poster={release.cover || '/placeholder-poster.jpg'}
                             year={release.releaseDate.split('-')[0]}
                             type={release.type}
-                            remarks={`${daysUntilRelease}天后上映`}
+                            remarks={remarksText}
                             query={release.title}
                             episodes={release.type === 'tv' ? 99 : 1}
                           />
