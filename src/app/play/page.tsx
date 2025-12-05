@@ -4735,32 +4735,50 @@ function PlayPageClient() {
                       return (
                         <div
                           key={item.id}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            window.location.href = playUrl;
+                          ref={(node) => {
+                            if (node) {
+                              // 移除旧的监听器
+                              const oldClick = (node as any)._clickHandler;
+                              const oldTouchEnd = (node as any)._touchEndHandler;
+                              if (oldClick) node.removeEventListener('click', oldClick, true);
+                              if (oldTouchEnd) node.removeEventListener('touchend', oldTouchEnd, true);
+
+                              // 添加捕获阶段的监听器
+                              const clickHandler = (e: Event) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                                window.location.href = playUrl;
+                              };
+                              const touchEndHandler = (e: Event) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                e.stopImmediatePropagation();
+                                window.location.href = playUrl;
+                              };
+
+                              node.addEventListener('click', clickHandler, true);
+                              node.addEventListener('touchend', touchEndHandler, true);
+
+                              // 保存引用以便清理
+                              (node as any)._clickHandler = clickHandler;
+                              (node as any)._touchEndHandler = touchEndHandler;
+                            }
                           }}
-                          className='cursor-pointer'
                           style={{
                             WebkitTapHighlightColor: 'transparent',
                             touchAction: 'manipulation'
                           }}
                         >
-                          <div
-                            style={{
-                              pointerEvents: 'none'
-                            }}
-                          >
-                            <VideoCard
-                              id={item.id}
-                              title={item.title}
-                              poster={item.poster}
-                              rate={item.rate}
-                              douban_id={parseInt(item.id)}
-                              from='douban'
-                              isAggregate={true}
-                            />
-                          </div>
+                          <VideoCard
+                            id={item.id}
+                            title={item.title}
+                            poster={item.poster}
+                            rate={item.rate}
+                            douban_id={parseInt(item.id)}
+                            from='douban'
+                            isAggregate={true}
+                          />
                         </div>
                       );
                     })}
