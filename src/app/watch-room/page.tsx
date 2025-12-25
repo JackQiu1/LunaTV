@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Users, UserPlus, List as ListIcon, Lock, RefreshCw, Video } from 'lucide-react';
+import { Users, UserPlus, List as ListIcon, Lock, RefreshCw, Video, LogOut } from 'lucide-react';
 import { useWatchRoomContext } from '@/components/WatchRoomProvider';
 import PageLayout from '@/components/PageLayout';
 import { getAuthInfoFromBrowserCookie } from '@/lib/auth';
@@ -12,7 +12,7 @@ type TabType = 'create' | 'join' | 'list';
 
 export default function WatchRoomPage() {
   const watchRoom = useWatchRoomContext();
-  const { getRoomList, isConnected, createRoom, joinRoom, currentRoom, isOwner, members } = watchRoom;
+  const { getRoomList, isConnected, createRoom, joinRoom, leaveRoom, currentRoom, isOwner, members } = watchRoom;
   const [activeTab, setActiveTab] = useState<TabType>('create');
 
   // 获取当前登录用户
@@ -136,6 +136,13 @@ export default function WatchRoomPage() {
     setActiveTab('join');
   };
 
+  // 离开/解散房间
+  const handleLeaveRoom = () => {
+    if (confirm(isOwner ? '确定要解散房间吗？所有成员将被踢出房间。' : '确定要退出房间吗？')) {
+      leaveRoom();
+    }
+  };
+
   const formatTime = (timestamp: number) => {
     const now = Date.now();
     const diff = now - timestamp;
@@ -195,15 +202,24 @@ export default function WatchRoomPage() {
       <div className="flex flex-col gap-4 py-4 px-5 lg:px-[3rem] 2xl:px-20">
         {/* 页面标题 */}
         <div className="py-1">
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <Users className="w-6 h-6 text-indigo-500" />
-            观影室
-            {currentRoom && (
-              <span className="text-sm font-normal text-gray-500 dark:text-gray-400">
-                ({isOwner ? '房主' : '房员'})
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+              <Users className="w-6 h-6 text-indigo-500" />
+              观影室
+              {currentRoom && (
+                <span className="text-sm font-normal text-gray-500 dark:text-gray-400">
+                  ({isOwner ? '房主' : '房员'})
+                </span>
+              )}
+            </h1>
+            {/* 连接状态指示器 */}
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                {isConnected ? '已连接' : '未连接'}
               </span>
-            )}
-          </h1>
+            </div>
+          </div>
           <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
             与好友一起看视频，实时同步播放
           </p>
@@ -307,6 +323,15 @@ export default function WatchRoomPage() {
                         💡 前往播放页面开始观影，房间成员将自动同步您的操作
                       </p>
                     </div>
+
+                    {/* 离开/解散房间按钮 */}
+                    <button
+                      onClick={handleLeaveRoom}
+                      className="w-full flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white font-medium py-3 rounded-lg transition-colors"
+                    >
+                      <LogOut className="h-5 w-5" />
+                      {isOwner ? '解散房间' : '退出房间'}
+                    </button>
                   </div>
                 ) : (
                   <form onSubmit={handleCreateRoom} className="space-y-4">
@@ -465,6 +490,15 @@ export default function WatchRoomPage() {
                         💡 {isOwner ? '前往播放页面开始观影，房间成员将自动同步您的操作' : '等待房主开始播放，您的播放进度将自动跟随房主'}
                       </p>
                     </div>
+
+                    {/* 离开/解散房间按钮 */}
+                    <button
+                      onClick={handleLeaveRoom}
+                      className="w-full flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white font-medium py-3 rounded-lg transition-colors"
+                    >
+                      <LogOut className="h-5 w-5" />
+                      {isOwner ? '解散房间' : '退出房间'}
+                    </button>
                   </div>
                 ) : (
                   <form onSubmit={handleJoinRoom} className="space-y-4">
