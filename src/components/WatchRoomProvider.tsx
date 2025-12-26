@@ -70,17 +70,50 @@ export function WatchRoomProvider({ children }: WatchRoomProviderProps) {
   const [currentUserName, setCurrentUserName] = useState('游客');
   const [userNameLoaded, setUserNameLoaded] = useState(false);
 
-  // 获取当前登录用户名（客户端挂载后执行）
+  // 获取当前登录用户名（持续监听直到获取成功）
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window === 'undefined') return;
+
+    let intervalId: NodeJS.Timeout | null = null;
+    let checkCount = 0;
+    const maxChecks = 20; // 最多检查20次
+    const checkInterval = 500; // 每500ms检查一次
+
+    const checkUsername = () => {
+      checkCount++;
+      console.log(`[WatchRoom] Checking username (${checkCount}/${maxChecks})...`);
       console.log('[WatchRoom] All cookies:', document.cookie);
+
       const authInfo = getAuthInfoFromBrowserCookie();
       console.log('[WatchRoom] Auth info:', authInfo);
       const username = authInfo?.username || '游客';
-      console.log('[WatchRoom] Setting username to:', username);
-      setCurrentUserName(username);
-      setUserNameLoaded(true);
+
+      if (username !== '游客') {
+        // 成功获取用户名
+        console.log('[WatchRoom] ✓ Username loaded:', username);
+        setCurrentUserName(username);
+        setUserNameLoaded(true);
+        if (intervalId) clearInterval(intervalId);
+      } else if (checkCount >= maxChecks) {
+        // 达到最大检查次数，放弃
+        console.log('[WatchRoom] ✗ Failed to load username after', maxChecks, 'attempts');
+        setCurrentUserName('游客');
+        setUserNameLoaded(true);
+        if (intervalId) clearInterval(intervalId);
+      }
+    };
+
+    // 立即检查一次
+    checkUsername();
+
+    // 如果第一次没成功，启动定时器持续检查
+    if (currentUserName === '游客') {
+      intervalId = setInterval(checkUsername, checkInterval);
     }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
   }, []);
 
   const watchRoom = useWatchRoom({
