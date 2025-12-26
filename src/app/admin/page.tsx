@@ -5779,6 +5779,13 @@ const NetDiskShareConfig = ({
     pikpak: {
       enabled: false,
     },
+    pan123: {
+      enabled: false,
+    },
+    cloud115: {
+      enabled: false,
+      cookie: '',
+    },
   });
 
   // 从config加载设置
@@ -5791,6 +5798,13 @@ const NetDiskShareConfig = ({
         },
         pikpak: {
           enabled: config.NetDiskShareConfig.pikpak?.enabled ?? false,
+        },
+        pan123: {
+          enabled: config.NetDiskShareConfig.pan123?.enabled ?? false,
+        },
+        cloud115: {
+          enabled: config.NetDiskShareConfig.cloud115?.enabled ?? false,
+          cookie: config.NetDiskShareConfig.cloud115?.cookie || '',
         },
       });
     }
@@ -5836,6 +5850,8 @@ const NetDiskShareConfig = ({
             <ul className='list-disc list-inside mt-1 space-y-1'>
               <li>阿里云盘 - 需要配置 RefreshToken</li>
               <li>PikPak - 免登录，无需配置</li>
+              <li>123网盘 - 免登录，无需配置</li>
+              <li>115网盘 - 需要配置 Cookie</li>
             </ul>
           </div>
         </div>
@@ -5940,6 +5956,110 @@ const NetDiskShareConfig = ({
                 <path fillRule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' clipRule='evenodd' />
               </svg>
               <p>PikPak 使用设备签名机制，无需登录即可解析分享链接。</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 123网盘配置 */}
+      <div className='bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700 shadow-sm'>
+        <div className='flex items-center justify-between'>
+          <div>
+            <h3 className='text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center'>
+              <span className='mr-2'>🔢</span>
+              123网盘 分享解析
+            </h3>
+            <p className='text-sm text-gray-500 dark:text-gray-400 mt-1'>
+              解析 123网盘 分享链接（免登录，无需配置）
+            </p>
+          </div>
+          <label className='relative inline-flex items-center cursor-pointer'>
+            <input
+              type='checkbox'
+              className='sr-only peer'
+              checked={shareSettings.pan123.enabled}
+              onChange={(e) => setShareSettings(prev => ({
+                ...prev,
+                pan123: {
+                  ...prev.pan123,
+                  enabled: e.target.checked,
+                },
+              }))}
+            />
+            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            <span className='ml-3 text-sm font-medium text-gray-900 dark:text-gray-300'>
+              {shareSettings.pan123.enabled ? '已启用' : '已禁用'}
+            </span>
+          </label>
+        </div>
+
+        {shareSettings.pan123.enabled && (
+          <div className='mt-4 pt-4 border-t border-gray-200 dark:border-gray-700'>
+            <div className='flex items-start space-x-2 text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 px-3 py-2 rounded-lg'>
+              <svg className='h-5 w-5 flex-shrink-0' fill='currentColor' viewBox='0 0 20 20'>
+                <path fillRule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' clipRule='evenodd' />
+              </svg>
+              <p>123网盘 使用签名机制，无需登录即可解析分享链接。</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 115网盘配置 */}
+      <div className='bg-white dark:bg-gray-800 rounded-lg p-6 border border-gray-200 dark:border-gray-700 shadow-sm'>
+        <div className='flex items-center justify-between mb-4'>
+          <div>
+            <h3 className='text-lg font-semibold text-gray-900 dark:text-gray-100 flex items-center'>
+              <span className='mr-2'>💾</span>
+              115网盘分享解析
+            </h3>
+            <p className='text-sm text-gray-500 dark:text-gray-400 mt-1'>
+              解析115网盘分享链接，获取直接播放地址
+            </p>
+          </div>
+          <label className='relative inline-flex items-center cursor-pointer'>
+            <input
+              type='checkbox'
+              className='sr-only peer'
+              checked={shareSettings.cloud115.enabled}
+              onChange={(e) => setShareSettings(prev => ({
+                ...prev,
+                cloud115: {
+                  ...prev.cloud115,
+                  enabled: e.target.checked,
+                },
+              }))}
+            />
+            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+            <span className='ml-3 text-sm font-medium text-gray-900 dark:text-gray-300'>
+              {shareSettings.cloud115.enabled ? '已启用' : '已禁用'}
+            </span>
+          </label>
+        </div>
+
+        {shareSettings.cloud115.enabled && (
+          <div className='space-y-4 mt-4 pt-4 border-t border-gray-200 dark:border-gray-700'>
+            <div>
+              <label className='block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2'>
+                Cookie <span className='text-red-500'>*</span>
+              </label>
+              <textarea
+                value={shareSettings.cloud115.cookie}
+                onChange={(e) => setShareSettings(prev => ({
+                  ...prev,
+                  cloud115: {
+                    ...prev.cloud115,
+                    cookie: e.target.value,
+                  },
+                }))}
+                placeholder='输入115网盘 Cookie'
+                rows={3}
+                className='w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white text-sm font-mono'
+              />
+              <p className='mt-2 text-xs text-gray-500 dark:text-gray-400'>
+                获取方法：登录 <a href='https://115.com' target='_blank' rel='noopener noreferrer' className='text-blue-600 hover:underline'>115.com</a>
+                → F12开发者工具 → Application → Cookies → 复制完整的 Cookie 字符串
+              </p>
             </div>
           </div>
         )}

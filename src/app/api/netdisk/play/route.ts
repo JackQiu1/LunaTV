@@ -1,8 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server';
+import { getAuthInfoFromCookie } from '@/lib/auth';
 import { AliyundriveShareClient } from '@/lib/aliyundrive-share';
 import { PikPakShareClient } from '@/lib/pikpak-share';
+import { Pan123ShareClient } from '@/lib/123pan-share';
 import { db } from '@/lib/db';
+import { Cloud115ShareClient } from '@/lib/115cloud-share';
+import { getConfig, clearConfigCache } from '@/lib/config';
+
+export const runtime = 'nodejs';
 
 /**
  * 网盘分享链接播放 API
@@ -10,6 +16,11 @@ import { db } from '@/lib/db';
  * Body: { shareUrl: string, sharePwd?: string }
  */
 export async function POST(request: NextRequest) {
+  const authInfo = getAuthInfoFromCookie(request);
+  if (!authInfo || !authInfo.username) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const body = await request.json();
     const { shareUrl, sharePwd } = body;
@@ -31,14 +42,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 在 try 块里获取配置，只调用一次
+    const config = await getConfig();
+
     let result;
 
     switch (platform) {
       case 'aliyundrive':
-        result = await handleAliyundrive(shareUrl, sharePwd);
+        result = await handleAliyundrive(config, shareUrl, sharePwd);
         break;
       case 'pikpak':
-        result = await handlePikPak(shareUrl, sharePwd);
+        result = await handlePikPak(config, shareUrl, sharePwd);
+        break;
+      case '123pan':
+        result = await handle123Pan(config, shareUrl, sharePwd);
+        break;
+      case '115cloud':
+        result = await handle115Cloud(config, shareUrl, sharePwd);
         break;
       default:
         return NextResponse.json(
@@ -74,6 +94,10 @@ function detectPlatform(shareUrl: string): string | null {
   if (url.includes('123pan.com') || url.includes('123yunpan.com')) {
     return '123pan';
   }
+  
+  if (url.includes('115.com')) {
+    return '115cloud';
+  }
 
   return null;
 }
@@ -81,11 +105,8 @@ function detectPlatform(shareUrl: string): string | null {
 /**
  * 处理阿里云盘分享链接
  */
-async function handleAliyundrive(shareUrl: string, sharePwd?: string) {
-  // 从数据库获取配置
-  const config = await db.getAdminConfig();
-
-  const aliyunConfig = config?.NetDiskShareConfig?.aliyundrive;
+async function handleAliyundrive(config: any, shareUrl: string, sharePwd?: string) {
+  const aliyunConfig = config.NetDiskShareConfig.aliyundrive;
 
   if (!aliyunConfig || !aliyunConfig.enabled || !aliyunConfig.refreshToken) {
     throw new Error('阿里云盘未配置或未启用，请在管理后台配置 RefreshToken');
@@ -102,6 +123,7 @@ async function handleAliyundrive(shareUrl: string, sharePwd?: string) {
   if (newRefreshToken !== aliyunConfig.refreshToken) {
     aliyunConfig.refreshToken = newRefreshToken;
     await db.saveAdminConfig(config);
+    clearConfigCache();
   }
 
   return {
@@ -114,7 +136,13 @@ async function handleAliyundrive(shareUrl: string, sharePwd?: string) {
 /**
  * 处理 PikPak 分享链接
  */
-async function handlePikPak(shareUrl: string, sharePwd?: string) {
+async function handlePikPak(config: any, shareUrl: string, sharePwd?: string) {
+  const pikpakConfig = config.NetDiskShareConfig.pikpak;
+
+  if (pikpakConfig && !pikpakConfig.enabled) {
+    throw new Error('PikPak分享解析未启用，请在管理后台启用');
+  }
+
   // PikPak 免登录，直接创建客户端
   const client = new PikPakShareClient(shareUrl, sharePwd);
 
@@ -124,6 +152,61 @@ async function handlePikPak(shareUrl: string, sharePwd?: string) {
   return {
     success: true,
     platform: 'pikpak',
+    ...result,
+  };
+}
+
+/**
+ * 处理 123网盘 分享链接
+ */
+async function handle123Pan(config: any, shareUrl: string, sharePwd?: string) {
+  const pan123Config = config.NetDiskShareConfig.pan123;
+
+  if (pan123Config && !pan123Config.enabled) {
+    throw new Error('123网盘分享解析未启用，请在管理后台启用');
+  }
+
+  // 从 URL 提取 shareKey
+  const urlObj = new URL(shareUrl);
+  const pathParts = urlObj.pathname.split('/');
+  const shareKey = pathParts[pathParts.length - 1];
+
+  // 创建客户端 (123网盘免登录)
+  const client = new Pan123ShareClient(shareKey, sharePwd);
+
+  // 解析并获取播放地址
+  const result = await client.parseShareLinkAndGetPlayUrl(shareUrl, sharePwd);
+
+  return {
+    success: true,
+    platform: '123pan',
+    ...result,
+  };
+}
+
+/**
+ * 处理 115网盘 分享链接
+ */
+async function handle115Cloud(config: any, shareUrl: string, sharePwd?: string) {
+  const cloud115Config = config.NetDiskShareConfig.cloud115;
+
+  if (!cloud115Config || !cloud115Config.enabled || !cloud115Config.cookie) {
+    throw new Error('115网盘未配置或未启用，请在管理后台配置 Cookie');
+  }
+
+  // 从 URL 提取 shareCode 和 receiveCode
+  const { shareCode, receiveCode } = Cloud115ShareClient.parseShareUrl(shareUrl);
+  const finalReceiveCode = sharePwd || receiveCode || '';
+
+  // 创建客户端 (需要 Cookie)
+  const client = new Cloud115ShareClient(cloud115Config.cookie, shareCode, finalReceiveCode);
+
+  // 解析并获取播放地址
+  const result = await client.parseShareLinkAndGetPlayUrl(shareUrl, sharePwd);
+
+  return {
+    success: true,
+    platform: '115cloud',
     ...result,
   };
 }
