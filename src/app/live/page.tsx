@@ -7,13 +7,14 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { Heart, Radio, RefreshCw, Search, Tv, X } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Tabs, Tab, Box } from '@mui/material';
 
 import {
   debounce,
 } from '@/lib/channel-search';
 import {
   isMobile,
-  isTablet, 
+  isTablet,
   isSafari,
   devicePerformance
 } from '@/lib/utils';
@@ -26,7 +27,6 @@ import {
 } from '@/lib/db.client';
 import { parseCustomTimeFormat } from '@/lib/time';
 
-import CategoryBar from '@/components/CategoryBar';
 import EpgScrollableRow from '@/components/EpgScrollableRow';
 import PageLayout from '@/components/PageLayout';
 
@@ -258,7 +258,9 @@ function LivePageClient() {
   const artPlayerRef = useRef<any>(null);
   const artRef = useRef<HTMLDivElement | null>(null);
 
-  // 频道列表滚动相关
+  // 分组标签滚动相关
+  const groupContainerRef = useRef<HTMLDivElement>(null);
+  const groupButtonRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const channelListRef = useRef<HTMLDivElement>(null);
 
   // -----------------------------------------------------------------------------
@@ -487,12 +489,19 @@ function LivePageClient() {
         targetGroup = Object.keys(grouped)[0] || '';
       }
 
-      // 设置过滤后的频道列表和选中的分组
+      // 先设置过滤后的频道列表，但不设置选中的分组
       setFilteredChannels(targetGroup ? grouped[targetGroup] : channels);
-      setSelectedGroup(targetGroup);
 
-      // 确保切换到频道tab
-      setActiveTab('channels');
+      // 触发模拟点击分组，让模拟点击来设置分组状态和触发滚动
+      if (targetGroup) {
+        // 确保切换到频道tab
+        setActiveTab('channels');
+
+        // 使用更长的延迟，确保状态更新和DOM渲染完成
+        setTimeout(() => {
+          simulateGroupClick(targetGroup);
+        }, 500); // 增加延迟时间，确保状态更新和DOM渲染完成
+      }
 
       setIsVideoLoading(false);
     } catch (err) {
@@ -613,6 +622,31 @@ function LivePageClient() {
         top: Math.max(0, scrollTop),
         behavior: 'smooth'
       });
+    }
+  };
+
+  // 模拟点击分组的函数
+  const simulateGroupClick = (group: string, retryCount = 0) => {
+    if (!groupContainerRef.current) {
+      if (retryCount < 10) {
+        setTimeout(() => {
+          simulateGroupClick(group, retryCount + 1);
+        }, 200);
+        return;
+      } else {
+        return;
+      }
+    }
+
+    // 直接通过 data-group 属性查找目标按钮
+    const targetButton = groupContainerRef.current.querySelector(`[data-group="${group}"]`) as HTMLButtonElement;
+
+    if (targetButton) {
+      // 手动设置分组状态，确保状态一致性
+      setSelectedGroup(group);
+
+      // 触发点击事件
+      (targetButton as HTMLButtonElement).click();
     }
   };
 
@@ -884,6 +918,25 @@ function LivePageClient() {
       localStorage.setItem('live-auto-refresh-interval', autoRefreshInterval.toString());
     }
   }, [autoRefreshInterval]);
+
+  // 当分组切换时，将激活的分组标签滚动到视口中间
+  useEffect(() => {
+    if (!selectedGroup || !groupContainerRef.current) return;
+
+    const groupKeys = Object.keys(groupedChannels);
+    const groupIndex = groupKeys.indexOf(selectedGroup);
+    if (groupIndex === -1) return;
+
+    const btn = groupButtonRefs.current[groupIndex];
+    if (btn) {
+      // 使用原生 scrollIntoView API 自动滚动到视口中央
+      btn.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',  // 水平居中显示选中的分组
+      });
+    }
+  }, [selectedGroup, groupedChannels]);
 
   class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
     constructor(config: any) {
@@ -1778,14 +1831,70 @@ function LivePageClient() {
                     {!searchQuery.trim() ? (
                       // 原有的分组显示模式
                       <>
-                        {/* 工业级分组标签 CategoryBar */}
-                        <CategoryBar
-                          groupedChannels={groupedChannels}
-                          selectedGroup={selectedGroup}
-                          onGroupChange={handleGroupChange}
-                          disabled={isSwitchingSource}
-                          disabledMessage='切换直播源中...'
-                        />
+                        {/* 分组标签 - 使用 Material UI Tabs */}
+                        <div className='mb-4 -mx-6 shrink-0'>
+                          {/* 切换状态提示 */}
+                          {isSwitchingSource && (
+                            <div className='flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400 px-6 mb-2'>
+                              <div className='w-2 h-2 bg-amber-500 rounded-full animate-pulse'></div>
+                              切换直播源中...
+                            </div>
+                          )}
+
+                          <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                            <Tabs
+                              value={selectedGroup}
+                              onChange={(_event, newValue) => handleGroupChange(newValue)}
+                              variant="scrollable"
+                              scrollButtons="auto"
+                              allowScrollButtonsMobile
+                              sx={{
+                                '& .MuiTabs-indicator': {
+                                  backgroundColor: '#22c55e', // green-500
+                                },
+                                '& .MuiTab-root': {
+                                  color: 'rgb(var(--tw-text-gray-700))',
+                                  minWidth: 80,
+                                  fontSize: '0.875rem',
+                                  fontWeight: 500,
+                                  textTransform: 'none',
+                                  '&.Mui-selected': {
+                                    color: '#22c55e', // green-500
+                                  },
+                                  '&.Mui-disabled': {
+                                    color: 'rgb(var(--tw-text-gray-400))',
+                                    opacity: 0.5,
+                                  },
+                                  '@media (prefers-color-scheme: dark)': {
+                                    color: 'rgb(var(--tw-text-gray-300))',
+                                    '&.Mui-selected': {
+                                      color: '#4ade80', // green-400
+                                    },
+                                    '&.Mui-disabled': {
+                                      color: 'rgb(var(--tw-text-gray-600))',
+                                    },
+                                  },
+                                },
+                                '& .MuiTabScrollButton-root': {
+                                  color: 'rgb(var(--tw-text-gray-600))',
+                                  '@media (prefers-color-scheme: dark)': {
+                                    color: 'rgb(var(--tw-text-gray-400))',
+                                  },
+                                },
+                              }}
+                            >
+                              {Object.keys(groupedChannels).map((group) => (
+                                <Tab
+                                  key={group}
+                                  label={group}
+                                  value={group}
+                                  disabled={isSwitchingSource}
+                                  data-group={group}
+                                />
+                              ))}
+                            </Tabs>
+                          </Box>
+                        </div>
 
                     {/* 频道列表 */}
                     <div ref={channelListRef} className='flex-1 overflow-y-auto space-y-2 pb-4'>
