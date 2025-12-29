@@ -110,6 +110,55 @@ const MessageItem = memo(({
                       }
                     </p>
                   );
+                },
+                // 自定义列表项渲染，将《片名》转换为可点击链接
+                li: ({node, children, ...props}) => {
+                  const processChildren = (child: any): any => {
+                    if (typeof child === 'string') {
+                      // 匹配《片名》格式并转换为可点击的span
+                      const parts = child.split(/(《[^》]+》)/g);
+                      return parts.map((part, i) => {
+                        const match = part.match(/《([^》]+)》/);
+                        if (match) {
+                          const title = match[1];
+                          return (
+                            <span
+                              key={i}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleTitleClick(title);
+                              }}
+                              className="text-blue-600 dark:text-blue-400 font-medium cursor-pointer hover:underline"
+                            >
+                              {part}
+                            </span>
+                          );
+                        }
+                        return part;
+                      });
+                    } else if (child?.props?.children) {
+                      // 递归处理嵌套子元素
+                      return {
+                        ...child,
+                        props: {
+                          ...child.props,
+                          children: Array.isArray(child.props.children)
+                            ? child.props.children.map(processChildren)
+                            : processChildren(child.props.children)
+                        }
+                      };
+                    }
+                    return child;
+                  };
+
+                  return (
+                    <li {...props}>
+                      {Array.isArray(children)
+                        ? children.map(child => processChildren(child))
+                        : processChildren(children)
+                      }
+                    </li>
+                  );
                 }
               }}
             >
@@ -584,11 +633,82 @@ export default function AIRecommendModal({ isOpen, onClose, context, welcomeMess
           }
         );
 
+        // 从AI回复中提取推荐影片（用于流式响应）
+        const extractRecommendations = (content: string): MovieRecommendation[] => {
+          const recommendations: MovieRecommendation[] = [];
+          const lines = content.split('\n');
+
+          // 支持多种格式：
+          // 1. 《片名》（2023） - 带中文括号年份
+          // 2. 《片名》 - 不带年份
+          // 3. 1. 类型：《片名》(English Title) - 带类别前缀和英文名
+          // 4. 1. 《片名》 - 数字序号
+
+          // 匹配《》中的内容，允许前面有任意文本（类别、序号等）
+          const titlePattern = /《([^》]+)》/;
+
+          for (let i = 0; i < lines.length; i++) {
+            if (recommendations.length >= 4) break;
+
+            const line = lines[i];
+            const match = line.match(titlePattern);
+
+            if (match) {
+              const title = match[1].trim();
+              let year = '';
+              let genre = '';
+              let description = 'AI推荐内容';
+
+              // 尝试从同一行提取年份（中文括号优先）
+              const yearMatchCN = line.match(/《[^》]+》\s*（(\d{4})）/);
+              const yearMatchEN = line.match(/《[^》]+》\s*\((\d{4})\)/);
+
+              if (yearMatchCN) {
+                year = yearMatchCN[1];
+              } else if (yearMatchEN) {
+                year = yearMatchEN[1];
+              }
+
+              // 尝试从同一行提取类型（在《》之前的部分）
+              const genreMatch = line.match(/(?:\d+\.\s*)?([^：:《]+)[：:]\s*《/);
+              if (genreMatch) {
+                genre = genreMatch[1].trim();
+              }
+
+              // 查找后续行的"类型："或"推荐理由："
+              for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+                const nextLine = lines[j];
+                if (nextLine.includes('类型：') || nextLine.includes('类型:')) {
+                  const extractedGenre = nextLine.split(/类型[：:]/)[1]?.trim();
+                  if (extractedGenre && !genre) {
+                    genre = extractedGenre;
+                  }
+                } else if (nextLine.includes('推荐理由：') || nextLine.includes('推荐理由:') || nextLine.includes('理由：') || nextLine.includes('理由:')) {
+                  description = nextLine.split(/(?:推荐)?理由[：:]/)[1]?.trim() || description;
+                  break;
+                }
+              }
+
+              recommendations.push({
+                title,
+                year,
+                genre,
+                description,
+              });
+            }
+          }
+          return recommendations;
+        };
+
+        // 使用最终内容（streamingContent优先，因为它包含完整的流式内容）
+        const finalContent = streamingContent || response.choices[0].message.content;
+        const extractedRecommendations = extractRecommendations(finalContent);
+
         const assistantMessage: ExtendedAIMessage = {
           role: 'assistant',
-          content: response.choices[0].message.content,
+          content: finalContent,
           timestamp: new Date().toISOString(),
-          recommendations: response.recommendations || [],
+          recommendations: response.recommendations || extractedRecommendations,
           youtubeVideos: response.youtubeVideos || [],
           videoLinks: response.videoLinks || [],
           type: response.type || 'normal',
