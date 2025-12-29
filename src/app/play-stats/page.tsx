@@ -1676,6 +1676,10 @@ const PlayStatsPage: React.FC = () => {
 
   // 渲染普通用户个人统计页面
   if (!isAdmin && userStats) {
+    console.log('[普通用户渲染] watchingUpdates:', watchingUpdates);
+    console.log('[普通用户渲染] watchingUpdates?.updatedSeries:', watchingUpdates?.updatedSeries);
+    console.log('[普通用户渲染] continueWatchingCount:', watchingUpdates?.continueWatchingCount);
+
     return (
       <PageLayout activePath="/play-stats">
         <div className='max-w-6xl mx-auto px-4 py-8'>
@@ -2011,8 +2015,8 @@ const PlayStatsPage: React.FC = () => {
                   {watchingUpdates.updatedSeries
                     .filter(series => series.hasNewEpisode)
                     .map((series, index) => (
-                      <div key={`new-${series.title}_${series.year}_${index}`} className="relative w-full">
-                        <div className="relative">
+                      <div key={`new-${series.title}_${series.year}_${index}`} className="relative w-full group/card">
+                        <div className="relative group-hover/card:z-5 transition-all duration-300 ease-in-out">
                           <VideoCard
                             title={series.title}
                             poster={series.cover || ''}
@@ -2021,9 +2025,8 @@ const PlayStatsPage: React.FC = () => {
                             progress={0}
                             currentEpisode={series.currentEpisode}
                             episodes={series.totalEpisodes}
-                            source_name={series.source_name}
-                            source={series.source_name}
-                            id={`${series.title}_${series.year}`}
+                            source={series.sourceKey}
+                            id={series.videoId}
                             onDelete={undefined}
                             remarks={series.remarks}
                           />
@@ -2045,8 +2048,8 @@ const PlayStatsPage: React.FC = () => {
                   {watchingUpdates.updatedSeries
                     .filter(series => series.hasNewEpisode)
                     .map((series, index) => (
-                      <div key={`new-${series.title}_${series.year}_${index}`} className="relative w-full">
-                        <div className="relative">
+                      <div key={`new-${series.title}_${series.year}_${index}`} className="relative w-full group/card">
+                        <div className="relative group-hover/card:z-5 transition-all duration-300 ease-in-out">
                           <VideoCard
                             title={series.title}
                             poster={series.cover || ''}
@@ -2055,9 +2058,8 @@ const PlayStatsPage: React.FC = () => {
                             progress={0}
                             currentEpisode={series.currentEpisode}
                             episodes={series.totalEpisodes}
-                            source_name={series.source_name}
-                            source={series.source_name}
-                            id={`${series.title}_${series.year}`}
+                            source={series.sourceKey}
+                            id={series.videoId}
                             onDelete={undefined}
                             remarks={series.remarks}
                           />
@@ -2096,8 +2098,8 @@ const PlayStatsPage: React.FC = () => {
                   {watchingUpdates.updatedSeries
                     .filter(series => series.hasContinueWatching && !series.hasNewEpisode)
                     .map((series, index) => (
-                      <div key={`continue-${series.title}_${series.year}_${index}`} className="relative w-full">
-                        <div className="relative">
+                      <div key={`continue-${series.title}_${series.year}_${index}`} className="relative w-full group/card">
+                        <div className="relative group-hover/card:z-5 transition-all duration-300 ease-in-out">
                           <VideoCard
                             title={series.title}
                             poster={series.cover || ''}
@@ -2106,9 +2108,8 @@ const PlayStatsPage: React.FC = () => {
                             progress={0}
                             currentEpisode={series.currentEpisode}
                             episodes={series.totalEpisodes}
-                            source_name={series.source_name}
-                            source={series.source_name}
-                            id={`${series.title}_${series.year}`}
+                            source={series.sourceKey}
+                            id={series.videoId}
                             onDelete={undefined}
                             remarks={series.remarks}
                           />
@@ -2130,8 +2131,8 @@ const PlayStatsPage: React.FC = () => {
                   {watchingUpdates.updatedSeries
                     .filter(series => series.hasContinueWatching && !series.hasNewEpisode)
                     .map((series, index) => (
-                      <div key={`continue-${series.title}_${series.year}_${index}`} className="relative w-full">
-                        <div className="relative">
+                      <div key={`continue-${series.title}_${series.year}_${index}`} className="relative w-full group/card">
+                        <div className="relative group-hover/card:z-5 transition-all duration-300 ease-in-out">
                           <VideoCard
                             title={series.title}
                             poster={series.cover || ''}
@@ -2140,9 +2141,8 @@ const PlayStatsPage: React.FC = () => {
                             progress={0}
                             currentEpisode={series.currentEpisode}
                             episodes={series.totalEpisodes}
-                            source_name={series.source_name}
-                            source={series.source_name}
-                            id={`${series.title}_${series.year}`}
+                            source={series.sourceKey}
+                            id={series.videoId}
                             onDelete={undefined}
                             remarks={series.remarks}
                           />
