@@ -5,7 +5,7 @@ import { getCachedSearchPage, setCachedSearchPage } from '@/lib/search-cache';
 import { SearchResult } from '@/lib/types';
 import { cleanHtmlTags } from '@/lib/utils';
 // 使用轻量级 switch-chinese 库（93.8KB vs opencc-js 5.6MB）
-import stcasc, { ChineseType } from 'switch-chinese';
+import stcasc from 'switch-chinese';
 
 // 创建模块级别的繁简转换器实例
 const converter = stcasc();
@@ -419,12 +419,15 @@ function generateSearchVariants(originalQuery: string): string[] {
   // 去重
   const uniqueVariants = Array.from(new Set(variants));
 
-  // 最后：对所有变体进行繁体转简体处理（如果检测到包含繁体）
+  // 最后：只对前几个优先级高的变体进行繁体转简体处理
+  // 避免对所有变体（可能有10+个）都进行转换导致性能下降
   const finalVariants: string[] = [];
-  uniqueVariants.forEach(variant => {
+  const MAX_VARIANTS_TO_CONVERT = 3; // 只转换前3个变体
+
+  uniqueVariants.forEach((variant, index) => {
     finalVariants.push(variant);
-    // 如果变体不是纯简体中文，尝试转换
-    if (converter.detect(variant) !== ChineseType.SIMPLIFIED) {
+    // 只对前几个变体进行繁转简
+    if (index < MAX_VARIANTS_TO_CONVERT) {
       const simplifiedVariant = converter.simplized(variant);
       if (simplifiedVariant !== variant && !finalVariants.includes(simplifiedVariant)) {
         finalVariants.push(simplifiedVariant);
