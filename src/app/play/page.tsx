@@ -122,6 +122,9 @@ function PlayPageClient() {
   // 下载选集面板状态
   const [showDownloadEpisodeSelector, setShowDownloadEpisodeSelector] = useState(false);
 
+  // 视频分辨率状态
+  const [videoResolution, setVideoResolution] = useState<{ width: number; height: number } | null>(null);
+
   // 进度条拖拽状态管理
   const isDraggingProgressRef = useRef(false);
   const seekResetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -4250,6 +4253,20 @@ function PlayPageClient() {
         setError(null);
         setPlayerReady(true); // 标记播放器已就绪，启用观影室同步
 
+        // 获取视频分辨率并显示徽章
+        const video = artPlayerRef.current.video as HTMLVideoElement;
+        const updateResolution = () => {
+          if (video.videoWidth && video.videoHeight) {
+            setVideoResolution({ width: video.videoWidth, height: video.videoHeight });
+          }
+        };
+        
+        // 监听loadedmetadata事件获取分辨率
+        video.addEventListener('loadedmetadata', updateResolution);
+        if (video.videoWidth && video.videoHeight) {
+          updateResolution();
+        }
+
         // 观影室时间同步：从URL参数读取初始播放时间
         const timeParam = searchParams.get('t') || searchParams.get('time');
         if (timeParam && artPlayerRef.current) {
@@ -5502,6 +5519,35 @@ function PlayPageClient() {
                         跳过设置
                       </span>
                     </button>
+                  </div>
+                )}
+
+                {/* 视频分辨率徽章 - 固定显示在左下角 */}
+                {videoResolution && (
+                  <div
+                    style={{
+                      position: 'fixed',
+                      bottom: '70px',
+                      left: '20px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                      color: 'white',
+                      padding: '4px 10px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: '600',
+                      zIndex: 100,
+                      backdropFilter: 'blur(8px)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      transition: 'opacity 0.3s ease',
+                      pointerEvents: 'none',
+                      opacity: 0.85,
+                    }}
+                  >
+                    {videoResolution.height >= 2160 ? '4K' : 
+                     videoResolution.height >= 1440 ? '2K' : 
+                     videoResolution.height >= 1080 ? '1080P' : 
+                     videoResolution.height >= 720 ? '720P' : 
+                     videoResolution.height + 'P'}
                   </div>
                 )}
 
