@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 
 import { getCacheTime } from '@/lib/config';
-import { fetchWithPuppeteer, isDoubanChallengePage } from '@/lib/puppeteer-helper';
 import { getRandomUserAgent } from '@/lib/user-agent';
 
 // 请求限制器
@@ -85,39 +84,11 @@ export async function GET(request: Request) {
     const response = await fetch(target, fetchOptions);
     clearTimeout(timeoutId);
 
-    let html: string;
-
     if (!response.ok) {
-      if (response.status === 429) {
-        // 速率限制 - 直接使用 Puppeteer 绕过
-        console.log(`[Douban Comments] 遇到 429 速率限制，使用 Puppeteer 绕过...`);
-
-        try {
-          html = await fetchWithPuppeteer(target);
-          console.log(`[Douban Comments] Puppeteer 成功绕过 429 限制`);
-        } catch (puppeteerError) {
-          console.error(`[Douban Comments] Puppeteer 获取失败:`, puppeteerError);
-          throw new Error('请求过于频繁，请稍后再试');
-        }
-      } else {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-    } else {
-      html = await response.text();
-
-      // 检测并处理豆瓣反爬虫 challenge 页面
-      if (isDoubanChallengePage(html)) {
-        console.log(`[Douban Comments] 检测到反爬虫 challenge 页面，使用 Puppeteer 重新获取...`);
-
-        try {
-          html = await fetchWithPuppeteer(target);
-          console.log(`[Douban Comments] Puppeteer 成功获取页面内容`);
-        } catch (puppeteerError) {
-          console.error(`[Douban Comments] Puppeteer 获取失败:`, puppeteerError);
-          throw new Error('豆瓣触发了反爬虫验证且自动解决失败，请稍后再试');
-        }
-      }
+      throw new Error(`HTTP error! Status: ${response.status}`);
     }
+
+    const html = await response.text();
 
     // 解析短评列表
     const comments = parseDoubanComments(html);
