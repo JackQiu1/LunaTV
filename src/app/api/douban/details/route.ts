@@ -2,6 +2,7 @@ import { unstable_cache } from 'next/cache';
 import { NextResponse } from 'next/server';
 
 import { getCacheTime } from '@/lib/config';
+import { bypassDoubanChallenge } from '@/lib/puppeteer';
 import { getRandomUserAgent, getRandomUserAgentWithInfo, getSecChUaHeaders } from '@/lib/user-agent';
 
 // 请求限制器
@@ -27,9 +28,14 @@ function isDoubanChallengePage(html: string): boolean {
 /**
  * 从 Mobile API 获取详情（fallback 方案）
  */
-async function fetchFromMobileAPI(id: string): Promise<any> {
+async function fetchFromMobileAPI(id: string): Promise<{
+  code: number;
+  message: string;
+  data: any;
+}> {
   try {
-    const mobileApiUrl = `https://m.douban.com/rexxar/api/v2/movie/${id}`;
+    // 先尝试 movie 端点
+    let mobileApiUrl = `https://m.douban.com/rexxar/api/v2/movie/${id}`;
 
     console.log(`[Douban Mobile API] 开始请求: ${mobileApiUrl}`);
 
@@ -40,7 +46,7 @@ async function fetchFromMobileAPI(id: string): Promise<any> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-    const response = await fetch(mobileApiUrl, {
+    let response = await fetch(mobileApiUrl, {
       signal: controller.signal,
       headers: {
         'User-Agent': ua,
@@ -54,41 +60,109 @@ async function fetchFromMobileAPI(id: string): Promise<any> {
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-site',
       },
+      redirect: 'manual', // 手动处理重定向
     });
 
     clearTimeout(timeoutId);
 
     console.log(`[Douban Mobile API] 响应状态: ${response.status}`);
 
+    // 如果是 3xx 重定向，说明可能是电视剧，尝试 tv 端点
+    if (response.status >= 300 && response.status < 400) {
+      console.log(`[Douban Mobile API] 检测到重定向，尝试 TV 端点: ${id}`);
+      mobileApiUrl = `https://m.douban.com/rexxar/api/v2/tv/${id}`;
+
+      const tvController = new AbortController();
+      const tvTimeoutId = setTimeout(() => tvController.abort(), 15000);
+
+      response = await fetch(mobileApiUrl, {
+        signal: tvController.signal,
+        headers: {
+          'User-Agent': ua,
+          'Referer': 'https://movie.douban.com/explore',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Origin': 'https://movie.douban.com',
+          ...secChHeaders,
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-site',
+        },
+      });
+
+      clearTimeout(tvTimeoutId);
+      console.log(`[Douban Mobile API] TV 端点响应状态: ${response.status}`);
+    }
+
     if (!response.ok) {
       throw new Error(`Mobile API 返回 ${response.status}`);
     }
 
     const data = await response.json();
-    console.log(`[Douban Mobile API] ✅ 成功获取数据，标题: ${data.title}`);
+    console.log(`[Douban Mobile API] ✅ 成功获取数据，标题: ${data.title}, 类型: ${data.is_tv ? 'TV' : 'Movie'}, episodes_count: ${data.episodes_count || 0}`);
 
-    // 转换 Mobile API 数据格式到标准格式
+    // 转换 celebrities 数据
+    const celebrities = (data.actors || []).slice(0, 10).map((actor: any, index: number) => ({
+      id: actor.id || `actor-${index}`,
+      name: actor.name || '',
+      avatar: actor.avatar?.large || actor.avatar?.normal || '',
+      role: '演员',
+      avatars: actor.avatar ? {
+        small: actor.avatar.small || '',
+        medium: actor.avatar.normal || '',
+        large: actor.avatar.large || '',
+      } : undefined,
+    }));
+
+    // 解析时长
+    const durationStr = data.durations?.[0] || '';
+    const durationMatch = durationStr.match(/(\d+)/);
+    const movie_duration = durationMatch ? parseInt(durationMatch[1]) : 0;
+
+    // 解析电视剧集数和单集时长
+    const episodes = data.episodes_count || 0;
+
+    // 尝试从 episodes_info 解析单集时长，格式可能是 "每集45分钟" 或类似
+    let episode_length = 0;
+    if (data.episodes_info) {
+      const episodeLengthMatch = data.episodes_info.match(/(\d+)/);
+      if (episodeLengthMatch) {
+        episode_length = parseInt(episodeLengthMatch[1]);
+      }
+    }
+    // 如果 episodes_info 没有，尝试从 durations 获取（对于有些电视剧）
+    if (!episode_length && durationMatch && data.is_tv) {
+      episode_length = parseInt(durationMatch[1]);
+    }
+
+    // 转换 Mobile API 数据格式到标准格式，并包装成 API 响应格式
     return {
-      id: data.id,
-      title: data.title,
-      originalTitle: data.original_title || '',
-      year: data.year || '',
-      rating: {
-        value: data.rating?.value || 0,
-        count: data.rating?.count || 0,
+      code: 200,
+      message: '获取成功（使用 Mobile API）',
+      data: {
+        id: data.id,
+        title: data.title,
+        poster: data.pic?.large || data.pic?.normal || '',
+        rate: data.rating?.value ? data.rating.value.toFixed(1) : '0.0',
+        year: data.year || '',
+        directors: data.directors?.map((d: any) => d.name) || [],
+        screenwriters: [],
+        cast: data.actors?.map((a: any) => a.name) || [],
+        genres: data.genres || [],
+        countries: data.countries || [],
+        languages: data.languages || [],
+        ...(episodes > 0 && { episodes }), // 只在有值时才包含
+        ...(episode_length > 0 && { episode_length }), // 只在有值时才包含
+        movie_duration,
+        first_aired: data.pubdate?.[0] || '',
+        plot_summary: data.intro || '',
+        celebrities,
+        recommendations: [], // Mobile API 没有推荐数据
+        actors: celebrities, // 与 web 版保持一致
+        backdrop: data.pic?.large || '',
+        trailerUrl: data.trailers?.[0]?.video_url || '',
       },
-      genres: data.genres || [],
-      directors: data.directors?.map((d: any) => d.name) || [],
-      actors: data.actors?.map((a: any) => a.name) || [],
-      summary: data.intro || '',
-      poster: data.pic?.large || data.pic?.normal || '',
-      countries: data.countries || [],
-      languages: data.languages || [],
-      duration: data.durations?.[0] || '',
-      releaseDate: data.pubdate?.[0] || '',
-      trailerUrl: data.trailers?.[0]?.video_url || '',
-      imdbId: '',
-      tags: data.tags || [],
     };
   } catch (error) {
     console.error(`[Douban Mobile API] ❌ 获取失败:`, error);
@@ -331,13 +405,31 @@ async function _scrapeDoubanDetails(id: string, retryCount = 0): Promise<any> {
     html = await response.text();
     console.log(`[Douban] 页面长度: ${html.length}`);
 
-    // 检测 challenge 页面 - fallback 到 Mobile API（不重试）
+    // 检测 challenge 页面 - 尝试 Puppeteer 绕过，失败则 fallback 到 Mobile API
     if (isDoubanChallengePage(html)) {
-      console.log(`[Douban] 检测到 challenge 页面，使用 Mobile API fallback...`);
+      console.log(`[Douban] 检测到 challenge 页面，尝试使用 Puppeteer 绕过...`);
+
       try {
-        return await fetchFromMobileAPI(id);
-      } catch (mobileError) {
-        throw new DoubanError('豆瓣反爬虫激活且 Mobile API 不可用，请稍后再试', 'RATE_LIMIT', 429);
+        // 尝试使用 Puppeteer 绕过 Challenge
+        const puppeteerResult = await bypassDoubanChallenge(target);
+        html = puppeteerResult.html;
+
+        // 再次检测是否成功绕过
+        if (isDoubanChallengePage(html)) {
+          console.log(`[Douban] Puppeteer 绕过失败，使用 Mobile API fallback...`);
+          return await fetchFromMobileAPI(id);
+        }
+
+        console.log(`[Douban] ✅ Puppeteer 成功绕过 Challenge`);
+        // 继续使用 Puppeteer 获取的 HTML 进行解析
+      } catch (puppeteerError) {
+        console.error(`[Douban] Puppeteer 执行失败:`, puppeteerError);
+        console.log(`[Douban] 使用 Mobile API fallback...`);
+        try {
+          return await fetchFromMobileAPI(id);
+        } catch (mobileError) {
+          throw new DoubanError('豆瓣反爬虫激活，Puppeteer 和 Mobile API 均不可用', 'RATE_LIMIT', 429);
+        }
       }
     }
 
