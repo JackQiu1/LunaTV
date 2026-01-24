@@ -427,7 +427,7 @@ function ShortDramaCard({
             </p>
           )}
         </div>
-      </Link>
+      </div>
 
       {/* 移动端操作面板 */}
       <MobileActionSheet
@@ -506,7 +506,7 @@ function ShortDramaCard({
           welcomeMessage={`想了解《${drama.name}》的更多信息吗？我可以帮你查询剧情、演员、评价等。`}
         />
       )}
-    </div>
+    </>
   );
 }
 
