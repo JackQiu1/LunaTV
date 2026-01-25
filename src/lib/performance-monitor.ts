@@ -79,6 +79,7 @@ async function loadFromKvrocks(): Promise<void> {
 async function saveToKvrocks(): Promise<void> {
   try {
     // 保存整个 requestCache 到 Kvrocks，不设置过期时间（手动管理 48 小时清理）
+    console.log(`💾 [Performance] 保存 ${requestCache.length} 条数据到 Kvrocks`);
     await db.setCache(PERFORMANCE_KEY, requestCache);
   } catch (error) {
     console.error('❌ 保存性能数据到 Kvrocks 失败:', error);
@@ -88,7 +89,10 @@ async function saveToKvrocks(): Promise<void> {
 /**
  * 记录单次请求的性能数据
  */
-export function recordRequest(metrics: RequestMetrics): void {
+export async function recordRequest(metrics: RequestMetrics): Promise<void> {
+  // 首次调用时从 Kvrocks 加载历史数据
+  await loadFromKvrocks();
+
   // 添加到缓存
   requestCache.push(metrics);
 
@@ -253,7 +257,10 @@ export async function getRecentRequests(limit: number = 100): Promise<RequestMet
 /**
  * 获取当前系统状态
  */
-export function getCurrentStatus() {
+export async function getCurrentStatus() {
+  // 首次调用时从 Kvrocks 加载历史数据
+  await loadFromKvrocks();
+
   const systemMetrics = collectSystemMetrics();
   const recentRequests = requestCache.filter(
     (r) => r.timestamp > Date.now() - 60000 // 最近1分钟
