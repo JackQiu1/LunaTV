@@ -22,6 +22,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
+  Activity,
   AlertCircle,
   AlertTriangle,
   Brain,
@@ -62,6 +63,7 @@ import ShortDramaConfig from '@/components/ShortDramaConfig';
 import DownloadConfig from '@/components/OfflineDownloadConfig';
 import CustomAdFilterConfig from '@/components/CustomAdFilterConfig';
 import WatchRoomConfig from '@/components/WatchRoomConfig';
+import PerformanceMonitor from '@/components/admin/PerformanceMonitor';
 import PageLayout from '@/components/PageLayout';
 
 // 统一按钮样式系统
@@ -285,6 +287,7 @@ interface SiteConfig {
   DisableYellowFilter: boolean;
   ShowAdultContent: boolean;
   FluidSearch: boolean;
+  EnablePuppeteer: boolean; // 豆瓣 Puppeteer 开关
   // TMDB配置
   TMDBApiKey?: string;
   TMDBLanguage?: string;
@@ -4711,6 +4714,7 @@ const SiteConfigComponent = ({ config, refreshConfig }: { config: AdminConfig | 
     DoubanProxy: '',
     DoubanImageProxyType: 'direct',
     DoubanImageProxy: '',
+    EnablePuppeteer: false, // 默认关闭 Puppeteer
     DisableYellowFilter: false,
     ShowAdultContent: false,
     FluidSearch: true,
@@ -4779,6 +4783,7 @@ const SiteConfigComponent = ({ config, refreshConfig }: { config: AdminConfig | 
         DoubanImageProxyType:
           config.SiteConfig.DoubanImageProxyType || 'direct',
         DoubanImageProxy: config.SiteConfig.DoubanImageProxy || '',
+        EnablePuppeteer: config.DoubanConfig?.enablePuppeteer || false,
         DisableYellowFilter: config.SiteConfig.DisableYellowFilter || false,
         ShowAdultContent: config.SiteConfig.ShowAdultContent || false,
         FluidSearch: config.SiteConfig.FluidSearch || true,
@@ -5142,6 +5147,36 @@ const SiteConfigComponent = ({ config, refreshConfig }: { config: AdminConfig | 
             </p>
           </div>
         )}
+      </div>
+
+      {/* 豆瓣 Puppeteer 设置 */}
+      <div>
+        <label className='flex items-center justify-between text-sm font-medium text-gray-700 dark:text-gray-300'>
+          <span>启用 Puppeteer 绕过反爬虫</span>
+          <button
+            type='button'
+            onClick={() =>
+              setSiteSettings((prev) => ({
+                ...prev,
+                EnablePuppeteer: !prev.EnablePuppeteer,
+              }))
+            }
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 ${
+              siteSettings.EnablePuppeteer
+                ? 'bg-green-600'
+                : 'bg-gray-300 dark:bg-gray-600'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
+                siteSettings.EnablePuppeteer ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </label>
+        <p className='mt-1 text-xs text-gray-500 dark:text-gray-400'>
+          开启后可获取完整数据（演员图片、相关推荐、评论），但会增加服务器 CPU 占用。默认关闭以节省资源。
+        </p>
       </div>
 
       {/* 搜索接口可拉取最大页数 */}
@@ -6377,6 +6412,7 @@ function AdminPageClient() {
     configFile: false,
     cacheManager: false,
     dataMigration: false,
+    performanceMonitor: false,
   });
 
   // 获取管理员配置
@@ -6850,6 +6886,23 @@ function AdminPageClient() {
                 onToggle={() => toggleTab('dataMigration')}
               >
                 <DataMigration onRefreshConfig={fetchConfig} />
+              </CollapsibleTab>
+            )}
+
+            {/* 性能监控标签 - 仅站长可见 */}
+            {role === 'owner' && (
+              <CollapsibleTab
+                title='性能监控'
+                icon={
+                  <Activity
+                    size={20}
+                    className='text-gray-600 dark:text-gray-400'
+                  />
+                }
+                isExpanded={expandedTabs.performanceMonitor}
+                onToggle={() => toggleTab('performanceMonitor')}
+              >
+                <PerformanceMonitor />
               </CollapsibleTab>
             )}
           </div>
