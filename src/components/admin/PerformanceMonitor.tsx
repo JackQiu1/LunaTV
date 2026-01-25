@@ -54,6 +54,11 @@ export default function PerformanceMonitor() {
       '/api/cron': 'Cron 任务',
       '/api/series': '剧集管理',
       '/api/favorites': '收藏管理',
+      '/api/playrecords': '播放记录',
+      '/api/skipconfigs': '跳过配置',
+      '/api/search': '视频搜索',
+      '/api/source-browser/list': '视频列表',
+      '/api/detail': '视频详情',
       '/api/admin': '管理后台',
     };
 
@@ -78,8 +83,53 @@ export default function PerformanceMonitor() {
       if (apiFilter === 'admin') return req.path.startsWith('/api/admin');
       if (apiFilter === 'series') return req.path.startsWith('/api/series');
       if (apiFilter === 'favorites') return req.path.startsWith('/api/favorites');
+      if (apiFilter === 'playrecords') return req.path.startsWith('/api/playrecords');
+      if (apiFilter === 'skipconfigs') return req.path.startsWith('/api/skipconfigs');
+      if (apiFilter === 'search') return req.path.startsWith('/api/search');
+      if (apiFilter === 'list') return req.path.startsWith('/api/source-browser/list');
+      if (apiFilter === 'detail') return req.path.startsWith('/api/detail');
       return true;
     });
+  };
+
+  // 计算过滤后的统计数据
+  const getFilteredStats = () => {
+    if (!data) return null;
+
+    // 获取最近1分钟的请求
+    const now = Date.now();
+    const oneMinuteAgo = now - 60000;
+    const recentRequests = data.recentRequests.filter((r: any) => r.timestamp > oneMinuteAgo);
+
+    // 应用API筛选
+    const filteredRequests = filterRequests(recentRequests);
+
+    if (filteredRequests.length === 0) {
+      return {
+        requestsPerMinute: 0,
+        avgResponseTime: 0,
+        dbQueriesPerMinute: 0,
+        trafficPerMinute: 0,
+      };
+    }
+
+    const avgResponseTime = Math.round(
+      filteredRequests.reduce((sum: number, r: any) => sum + r.duration, 0) / filteredRequests.length
+    );
+
+    const dbQueriesPerMinute = filteredRequests.reduce((sum: number, r: any) => sum + r.dbQueries, 0);
+
+    const trafficPerMinute = filteredRequests.reduce(
+      (sum: number, r: any) => sum + r.requestSize + r.responseSize,
+      0
+    );
+
+    return {
+      requestsPerMinute: filteredRequests.length,
+      avgResponseTime,
+      dbQueriesPerMinute,
+      trafficPerMinute,
+    };
   };
 
   // 获取性能数据
@@ -142,6 +192,9 @@ export default function PerformanceMonitor() {
     );
   }
 
+  // 获取过滤后的统计数据
+  const filteredStats = getFilteredStats();
+
   return (
     <div className='space-y-6 pb-safe-bottom'>
       {/* 标题和控制按钮 */}
@@ -168,10 +221,15 @@ export default function PerformanceMonitor() {
           >
             <option value='all'>全部 API</option>
             <option value='douban'>豆瓣 API</option>
-            <option value='cron'>Cron 任务</option>
-            <option value='admin'>管理后台</option>
-            <option value='series'>剧集管理</option>
+            <option value='search'>视频搜索</option>
+            <option value='list'>视频列表</option>
+            <option value='detail'>视频详情</option>
             <option value='favorites'>收藏管理</option>
+            <option value='playrecords'>播放记录</option>
+            <option value='skipconfigs'>跳过配置</option>
+            <option value='cron'>Cron 任务</option>
+            <option value='series'>剧集管理</option>
+            <option value='admin'>管理后台</option>
           </select>
 
           {/* 自动刷新 */}
@@ -244,10 +302,10 @@ export default function PerformanceMonitor() {
             <Activity className='w-5 h-5 text-green-500' />
           </div>
           <div className='text-2xl font-bold text-gray-800 dark:text-gray-200'>
-            {data.currentStatus.requestsPerMinute}
+            {filteredStats?.requestsPerMinute ?? 0}
           </div>
           <div className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
-            平均响应: {data.currentStatus.avgResponseTime}ms
+            平均响应: {filteredStats?.avgResponseTime ?? 0}ms
           </div>
         </div>
 
@@ -258,7 +316,7 @@ export default function PerformanceMonitor() {
             <Database className='w-5 h-5 text-purple-500' />
           </div>
           <div className='text-2xl font-bold text-gray-800 dark:text-gray-200'>
-            {data.currentStatus.dbQueriesPerMinute}
+            {filteredStats?.dbQueriesPerMinute ?? 0}
           </div>
         </div>
 
@@ -269,7 +327,7 @@ export default function PerformanceMonitor() {
             <Activity className='w-5 h-5 text-orange-500' />
           </div>
           <div className='text-2xl font-bold text-gray-800 dark:text-gray-200'>
-            {(data.currentStatus.trafficPerMinute / 1024).toFixed(2)} KB
+            {((filteredStats?.trafficPerMinute ?? 0) / 1024).toFixed(2)} KB
           </div>
         </div>
       </div>
