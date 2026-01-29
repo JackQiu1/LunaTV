@@ -149,57 +149,60 @@ export async function searchFromApi(
   try {
     const apiBaseUrl = apiSite.api;
 
-    // 智能搜索：使用预计算的变体或即时生成（优化：只生成最有用的变体）
-    const searchVariants = precomputedVariants || generateSearchVariants(query).slice(0, 3);
+    // 智能变体数量：有标点符号时用4个变体，否则用3个
+    const hasSpecialChars = /[：；，。！？、""''（）【】《》:;,.!?"'()\[\]<>]/.test(query);
+    const variantLimit = hasSpecialChars ? 4 : 3;
+    const searchVariants = precomputedVariants || generateSearchVariants(query).slice(0, variantLimit);
+    const seenIds = new Set<string>(); // 用于去重
     let results: SearchResult[] = [];
     let pageCountFromFirst = 0;
 
     // 调试：输出搜索变体
     console.log(`[DEBUG] 搜索变体 for "${query}":`, searchVariants);
 
-    // 快速策略：优先使用第一个变体（原始查询），如果找到足够结果就停止
-    const seenIds = new Set<string>(); // 用于去重
-    let foundEnoughResults = false;
-
-    for (let i = 0; i < searchVariants.length; i++) {
-      const variant = searchVariants[i];
-      const apiUrl =
-        apiBaseUrl + API_CONFIG.search.path + encodeURIComponent(variant);
-
-      console.log(`[DEBUG] 尝试搜索变体 ${i + 1}/${searchVariants.length}: "${variant}"`);
+    // 🚀 优化：并行搜索所有变体，第一个有结果的立即返回
+    const variantPromises = searchVariants.map(async (variant, index) => {
+      const apiUrl = apiBaseUrl + API_CONFIG.search.path + encodeURIComponent(variant);
+      console.log(`[DEBUG] 并行搜索变体 ${index + 1}/${searchVariants.length}: "${variant}"`);
 
       try {
-        // 使用新的缓存搜索函数处理第一页
-        const firstPageResult = await searchWithCache(apiSite, variant, 1, apiUrl, 8000);
-
-        if (firstPageResult.results.length > 0) {
-          console.log(`[DEBUG] 变体 "${variant}" 找到 ${firstPageResult.results.length} 个结果`);
-
-          // 去重添加结果
-          firstPageResult.results.forEach(result => {
-            const uniqueKey = `${result.source}_${result.id}`;
-            if (!seenIds.has(uniqueKey)) {
-              seenIds.add(uniqueKey);
-              results.push(result);
-            }
-          });
-
-          // 如果是第一个变体且找到了结果，记录页数
-          if (i === 0 && firstPageResult.pageCount) {
-            pageCountFromFirst = firstPageResult.pageCount;
-          }
-
-          // 优化：如果第一个变体找到了足够多的结果（≥5个），就停止搜索其他变体
-          if (i === 0 && results.length >= 5) {
-            console.log(`[DEBUG] 第一个变体找到足够结果，跳过其他变体`);
-            foundEnoughResults = true;
-            break;
-          }
-        } else {
-          console.log(`[DEBUG] 变体 "${variant}" 无结果`);
-        }
+        const result = await searchWithCache(apiSite, variant, 1, apiUrl, 8000);
+        return { variant, index, result };
       } catch (error) {
         console.log(`[DEBUG] 变体 "${variant}" 搜索失败:`, error);
+        return { variant, index, result: { results: [], pageCount: 0 } };
+      }
+    });
+
+    // 等待所有变体搜索完成
+    const variantResults = await Promise.all(variantPromises);
+
+    // 按原始顺序处理结果，优先使用靠前的变体结果
+    for (const { variant, index, result } of variantResults.sort((a, b) => a.index - b.index)) {
+      if (result.results.length > 0) {
+        console.log(`[DEBUG] 变体 "${variant}" 找到 ${result.results.length} 个结果`);
+
+        // 去重添加结果
+        result.results.forEach(r => {
+          const uniqueKey = `${r.source}_${r.id}`;
+          if (!seenIds.has(uniqueKey)) {
+            seenIds.add(uniqueKey);
+            results.push(r);
+          }
+        });
+
+        // 记录第一个有结果的变体的页数
+        if (pageCountFromFirst === 0 && result.pageCount) {
+          pageCountFromFirst = result.pageCount;
+        }
+
+        // 如果已经找到足够多的结果（≥5个），停止处理
+        if (results.length >= 5) {
+          console.log(`[DEBUG] 已找到足够结果，停止处理其他变体`);
+          break;
+        }
+      } else {
+        console.log(`[DEBUG] 变体 "${variant}" 无结果`);
       }
     }
 
@@ -212,11 +215,6 @@ export async function searchFromApi(
 
     // 使用原始查询进行后续分页
     query = searchVariants[0];
-    
-    // 如果所有变体都没有结果，直接返回空数组
-    if (results.length === 0) {
-      return [];
-    }
 
     const config = await getConfig();
     const MAX_SEARCH_PAGES: number = config.SiteConfig.SearchDownstreamMaxPage;
@@ -339,8 +337,10 @@ function calculateRelevanceScore(originalQuery: string, variant: string, results
 const M3U8_PATTERN = /(https?:\/\/[^"'\s]+?\.m3u8)/g;
 
 /**
- * 生成数字变体，处理中文数字与阿拉伯数字的转换
+ * 生成数字变体，处理中文数字、罗马数字、阿拉伯数字、S格式的转换
  * 例如："中国奇谭 第二季" -> "中国奇谭2"
+ *       "进击的巨人Ⅱ" -> "进击的巨人2"
+ *       "权力的游戏S2" -> "权力的游戏第二季"
  * @param query 原始查询
  * @returns 数字变体数组
  */
@@ -348,42 +348,86 @@ function generateNumberVariants(query: string): string[] {
   const variants: string[] = [];
 
   // 中文数字到阿拉伯数字的映射
-  const chineseNumbers: { [key: string]: string } = {
+  const chineseToArabic: { [key: string]: string } = {
     '一': '1', '二': '2', '三': '3', '四': '4', '五': '5',
     '六': '6', '七': '7', '八': '8', '九': '9', '十': '10',
   };
 
-  // 1. 处理"第X季/部/集"格式（最常见的情况）
+  // 罗马数字到阿拉伯数字的映射
+  const romanToArabic: { [key: string]: string } = {
+    'Ⅰ': '1', 'Ⅱ': '2', 'Ⅲ': '3', 'Ⅳ': '4', 'Ⅴ': '5',
+    'Ⅵ': '6', 'Ⅶ': '7', 'Ⅷ': '8', 'Ⅸ': '9', 'Ⅹ': '10',
+    'I': '1', 'II': '2', 'III': '3', 'IV': '4', 'V': '5',
+    'VI': '6', 'VII': '7', 'VIII': '8', 'IX': '9', 'X': '10',
+  };
+
+  // 阿拉伯数字到中文数字的映射
+  const arabicToChinese = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+
+  // 辅助函数：清理基础名称（去掉末尾标点符号和空格）
+  const cleanBase = (str: string) => str.replace(/[：:；;，,。.！!？?\s]+$/, '').trim();
+
+  // 1. 处理"第X季/部/集"格式
   const seasonPattern = /第([一二三四五六七八九十\d]+)(季|部|集|期)/;
-  const match = seasonPattern.exec(query);
-
-  if (match) {
-    const fullMatch = match[0];
-    const number = match[1];
-    const arabicNumber = chineseNumbers[number] || number;
-    const base = query.replace(fullMatch, '').trim();
-
+  const seasonMatch = seasonPattern.exec(query);
+  if (seasonMatch) {
+    const fullMatch = seasonMatch[0];
+    const number = seasonMatch[1];
+    const arabicNumber = chineseToArabic[number] || number;
+    const base = cleanBase(query.replace(fullMatch, ''));
     if (base) {
-      // 生成简化格式：无空格，如"中国奇谭2"
       variants.push(`${base}${arabicNumber}`);
     }
   }
 
-  // 2. 处理末尾纯数字（如"中国奇谭2"）-> "中国奇谭 第二季"
+  // 2. 处理末尾纯数字（如"中国奇谭2"）-> "中国奇谭第二季"
   const endNumberMatch = query.match(/^(.+?)\s*(\d+)$/);
   if (endNumberMatch) {
     const base = endNumberMatch[1].trim();
-    const number = endNumberMatch[2];
-    const chineseNum = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][parseInt(number)];
-
-    if (chineseNum && parseInt(number) <= 10) {
-      // 生成中文格式："中国奇谭第二季"
-      variants.push(`${base}第${chineseNum}季`);
+    const number = parseInt(endNumberMatch[2]);
+    if (number >= 1 && number <= 10) {
+      variants.push(`${base}第${arabicToChinese[number]}季`);
     }
   }
 
-  // 限制返回前1个最有可能的变体
-  return variants.slice(0, 1);
+  // 3. 处理罗马数字（如"进击的巨人Ⅱ"）-> "进击的巨人2"
+  const romanPattern = /^(.+?)\s*(Ⅰ|Ⅱ|Ⅲ|Ⅳ|Ⅴ|Ⅵ|Ⅶ|Ⅷ|Ⅸ|Ⅹ|VIII|VII|VI|IV|IX|III|II|I|V|X)$/;
+  const romanMatch = query.match(romanPattern);
+  if (romanMatch) {
+    const base = romanMatch[1].trim();
+    const roman = romanMatch[2];
+    const arabicNumber = romanToArabic[roman];
+    if (base && arabicNumber) {
+      variants.push(`${base}${arabicNumber}`);
+    }
+  }
+
+  // 4. 处理S格式（如"权力的游戏S2"或"权力的游戏S02"）-> "权力的游戏第二季"
+  const sFormatMatch = query.match(/^(.+?)\s*[Ss]0*(\d+)$/);
+  if (sFormatMatch) {
+    const base = sFormatMatch[1].trim();
+    const number = parseInt(sFormatMatch[2]);
+    if (base && number >= 1 && number <= 10) {
+      variants.push(`${base}第${arabicToChinese[number]}季`);
+    }
+  }
+
+  // 5. 反向：从"第X季"生成S格式（如"权力的游戏第二季"-> "权力的游戏S2"）
+  if (seasonMatch) {
+    const fullMatch = seasonMatch[0];
+    const number = seasonMatch[1];
+    const suffix = seasonMatch[2];
+    if (suffix === '季') {
+      const arabicNumber = chineseToArabic[number] || number;
+      const base = cleanBase(query.replace(fullMatch, ''));
+      if (base && !variants.includes(`${base}S${arabicNumber}`)) {
+        variants.push(`${base}S${arabicNumber}`);
+      }
+    }
+  }
+
+  // 限制返回前2个最有可能的变体
+  return variants.slice(0, 2);
 }
 
 /**
@@ -398,17 +442,17 @@ export function generateSearchVariants(originalQuery: string): string[] {
   // 1. 原始查询（最高优先级）
   variants.push(trimmed);
 
-  // 2. 处理中文标点符号变体
-  const chinesePunctuationVariants = generateChinesePunctuationVariants(trimmed);
-  chinesePunctuationVariants.forEach(variant => {
+  // 2. 数字变体生成（处理"第二季" <-> "2"转换，优先级高因为采集源命名差异常见）
+  const numberVariants = generateNumberVariants(trimmed);
+  numberVariants.forEach(variant => {
     if (!variants.includes(variant)) {
       variants.push(variant);
     }
   });
 
-  // 3. 数字变体生成（处理"第二季" <-> "2"转换）
-  const numberVariants = generateNumberVariants(trimmed);
-  numberVariants.forEach(variant => {
+  // 3. 处理中文标点符号变体
+  const chinesePunctuationVariants = generateChinesePunctuationVariants(trimmed);
+  chinesePunctuationVariants.forEach(variant => {
     if (!variants.includes(variant)) {
       variants.push(variant);
     }
