@@ -8,6 +8,7 @@ import {
   Calendar,
   Check,
   ChevronDown,
+  Download,
   ExternalLink,
   Heart,
   KeyRound,
@@ -41,8 +42,19 @@ import {
 } from '@/lib/db.client';
 import type { Favorite } from '@/lib/types';
 
+import { useDownload } from '@/contexts/DownloadContext';
+
 import { VersionPanel } from './VersionPanel';
 import VideoCard from './VideoCard';
+import {
+  useWatchRoomConfigQuery,
+  useServerConfigQuery,
+  useVersionCheckQuery,
+  usePlayRecordsQuery,
+  useFavoritesQuery,
+  useChangePasswordMutation,
+  useInvalidateUserMenuData,
+} from '@/hooks/useUserMenuQueries';
 
 interface AuthInfo {
   username?: string;
@@ -68,10 +80,16 @@ export const UserMenu: React.FC = () => {
   });
   const [mounted, setMounted] = useState(false);
   const [watchingUpdates, setWatchingUpdates] = useState<WatchingUpdate | null>(null);
-  const [playRecords, setPlayRecords] = useState<(PlayRecord & { key: string })[]>([]);
-  const [favorites, setFavorites] = useState<(Favorite & { key: string })[]>([]);
   const [hasUnreadUpdates, setHasUnreadUpdates] = useState(false);
-  const [showWatchRoom, setShowWatchRoom] = useState(false);
+  // 🚀 TanStack Query - 观影室配置
+  const { data: showWatchRoom = false } = useWatchRoomConfigQuery();
+  // 🚀 TanStack Query - 下载功能配置
+  const { data: serverConfig } = useServerConfigQuery();
+  const downloadEnabled = serverConfig?.downloadEnabled ?? true;
+  const { tasks, setShowDownloadPanel } = useDownload();
+
+  // 🚀 TanStack Query - 数据失效工具
+  const { invalidatePlayRecords, invalidateFavorites } = useInvalidateUserMenuData();
 
   // Body 滚动锁定 - 使用 overflow 方式避免布局问题
   useEffect(() => {
@@ -123,6 +141,8 @@ export const UserMenu: React.FC = () => {
 
   // 下载相关设置
   const [downloadFormat, setDownloadFormat] = useState<'TS' | 'MP4'>('TS');
+  // 精确搜索开关
+  const [exactSearch, setExactSearch] = useState(true);
 
   // 豆瓣数据源选项
   const doubanDataSourceOptions = [
@@ -181,9 +201,27 @@ export const UserMenu: React.FC = () => {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
-  // 版本检查相关状态
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [isChecking, setIsChecking] = useState(true);
+  // 🚀 TanStack Query - 版本检查
+  const { data: updateStatus = null, isLoading: isChecking } = useVersionCheckQuery();
+
+  // 数据查询条件
+  const dataQueryEnabled = typeof window !== 'undefined' && !!authInfo?.username && storageType !== 'localstorage';
+
+  // 🚀 TanStack Query - 播放记录
+  const { data: playRecords = [] } = usePlayRecordsQuery({
+    enabled: dataQueryEnabled,
+    enableFilter: enableContinueWatchingFilter,
+    minProgress: continueWatchingMinProgress,
+    maxProgress: continueWatchingMaxProgress,
+  });
+
+  // 🚀 TanStack Query - 收藏列表
+  const { data: favorites = [] } = useFavoritesQuery({
+    enabled: dataQueryEnabled,
+  });
+
+  // 🚀 TanStack Query - 修改密码
+  const changePasswordMutation = useChangePasswordMutation();
 
   // 确保组件已挂载
   useEffect(() => {
@@ -220,21 +258,7 @@ export const UserMenu: React.FC = () => {
     }
   }, []);
 
-  // 检查观影室功能是否启用
-  useEffect(() => {
-    const checkWatchRoomConfig = async () => {
-      try {
-        const response = await fetch('/api/watch-room/config');
-        const config = await response.json();
-        setShowWatchRoom(config.enabled === true);
-      } catch (error) {
-        console.error('Failed to check watch room config:', error);
-        setShowWatchRoom(false);
-      }
-    };
-
-    checkWatchRoomConfig();
-  }, []);
+  // 🚀 观影室配置和下载配置由 TanStack Query 自动管理
 
   // 从 localStorage 读取设置
   useEffect(() => {
@@ -353,24 +377,16 @@ export const UserMenu: React.FC = () => {
       if (savedDownloadFormat === 'TS' || savedDownloadFormat === 'MP4') {
         setDownloadFormat(savedDownloadFormat);
       }
+
+      // 加载精确搜索设置
+      const savedExactSearch = localStorage.getItem('exactSearch');
+      if (savedExactSearch !== null) {
+        setExactSearch(savedExactSearch === 'true');
+      }
     }
   }, []);
 
-  // 版本检查
-  useEffect(() => {
-    const checkUpdate = async () => {
-      try {
-        const status = await checkForUpdates();
-        setUpdateStatus(status);
-      } catch (error) {
-        console.warn('版本检查失败:', error);
-      } finally {
-        setIsChecking(false);
-      }
-    };
-
-    checkUpdate();
-  }, []);
+  // 🚀 版本检查由 TanStack Query 自动管理
 
   // 获取观看更新信息
   useEffect(() => {
@@ -402,13 +418,13 @@ export const UserMenu: React.FC = () => {
         }
       };
 
-      // 页面初始化时强制检查一次更新（绕过缓存限制）
+      // 页面初始化时检查更新（使用缓存机制）
       const forceInitialCheck = async () => {
-        console.log('页面初始化，强制检查更新...');
+        console.log('页面初始化，检查更新...');
         try {
-          // 🔧 修复：直接使用 forceRefresh=true，不再手动操作 localStorage
-          // 因为 kvrocks 模式使用内存缓存，删除 localStorage 无效
-          await checkWatchingUpdates(true);
+          // 🔧 修复：不使用强制刷新，让缓存机制生效（30分钟）
+          // 如果缓存有效，直接使用缓存；如果过期，自动重新检查
+          await checkWatchingUpdates();
 
           // 更新UI
           updateWatchingUpdates();
@@ -444,123 +460,39 @@ export const UserMenu: React.FC = () => {
     }
   }, [authInfo, storageType]);
 
-  // 加载播放记录（优化版）
+  // 🚀 播放记录和收藏由 TanStack Query 自动管理
+  // 监听事件来触发 TanStack Query 缓存失效
   useEffect(() => {
-    if (typeof window !== 'undefined' && authInfo?.username && storageType !== 'localstorage') {
-      const loadPlayRecords = async () => {
-        try {
-          const records = await getAllPlayRecords();
-          const recordsArray = Object.entries(records).map(([key, record]) => ({
-            ...record,
-            key,
-          }));
+    if (!dataQueryEnabled) return;
 
-          // 筛选真正需要继续观看的记录
-          const validPlayRecords = recordsArray.filter(record => {
-            const progress = getProgress(record);
+    const handlePlayRecordsUpdate = () => {
+      console.log('UserMenu: 播放记录更新，invalidate query');
+      invalidatePlayRecords();
+    };
 
-            // 播放时间必须超过2分钟
-            if (record.play_time < 120) return false;
+    const handleFavoritesUpdate = () => {
+      console.log('UserMenu: 收藏更新，invalidate query');
+      invalidateFavorites();
+    };
 
-            // 如果禁用了进度筛选，则显示所有播放时间超过2分钟的记录
-            if (!enableContinueWatchingFilter) return true;
+    window.addEventListener('playRecordsUpdated', handlePlayRecordsUpdate);
+    window.addEventListener('favoritesUpdated', handleFavoritesUpdate);
 
-            // 根据用户自定义的进度范围筛选
-            return progress >= continueWatchingMinProgress && progress <= continueWatchingMaxProgress;
-          });
+    // 监听watching-updates事件，刷新播放记录
+    const unsubscribeWatchingUpdates = subscribeToWatchingUpdatesEvent(() => {
+      const updates = getDetailedWatchingUpdates();
+      if (updates && updates.hasUpdates && updates.updatedCount > 0) {
+        console.log('UserMenu: 检测到新集数更新，invalidate play records');
+        invalidatePlayRecords();
+      }
+    });
 
-          // 按最后播放时间降序排列
-          const sortedRecords = validPlayRecords.sort((a, b) => b.save_time - a.save_time);
-          setPlayRecords(sortedRecords.slice(0, 12)); // 只取最近的12个
-        } catch (error) {
-          console.error('加载播放记录失败:', error);
-        }
-      };
-
-      loadPlayRecords();
-
-      // 监听播放记录更新事件（修复删除记录后页面不立即更新的问题）
-      const handlePlayRecordsUpdate = () => {
-        console.log('UserMenu: 播放记录更新，重新加载继续观看列表');
-        loadPlayRecords();
-      };
-
-      // 监听播放记录更新事件
-      window.addEventListener('playRecordsUpdated', handlePlayRecordsUpdate);
-
-      // 🔥 新增：监听watching-updates事件，与ContinueWatching组件保持一致
-      const unsubscribeWatchingUpdates = subscribeToWatchingUpdatesEvent(() => {
-        console.log('UserMenu: 收到watching-updates事件');
-
-        // 当检测到新集数更新时，强制刷新播放记录缓存确保数据同步
-        const updates = getDetailedWatchingUpdates();
-        if (updates && updates.hasUpdates && updates.updatedCount > 0) {
-          console.log('UserMenu: 检测到新集数更新，强制刷新播放记录缓存');
-          forceRefreshPlayRecordsCache();
-
-          // 短暂延迟后重新获取播放记录，确保缓存已刷新
-          setTimeout(async () => {
-            const freshRecords = await getAllPlayRecords();
-            const recordsArray = Object.entries(freshRecords).map(([key, record]) => ({
-              ...record,
-              key,
-            }));
-            const validPlayRecords = recordsArray.filter(record => {
-              const progress = getProgress(record);
-              if (record.play_time < 120) return false;
-              if (!enableContinueWatchingFilter) return true;
-              return progress >= continueWatchingMinProgress && progress <= continueWatchingMaxProgress;
-            });
-            const sortedRecords = validPlayRecords.sort((a, b) => b.save_time - a.save_time);
-            setPlayRecords(sortedRecords.slice(0, 12));
-          }, 100);
-        }
-      });
-
-      return () => {
-        window.removeEventListener('playRecordsUpdated', handlePlayRecordsUpdate);
-        unsubscribeWatchingUpdates(); // 🔥 清理watching-updates订阅
-      };
-    }
-  }, [authInfo, storageType, enableContinueWatchingFilter, continueWatchingMinProgress, continueWatchingMaxProgress]);
-
-  // 加载收藏数据
-  useEffect(() => {
-    if (typeof window !== 'undefined' && authInfo?.username && storageType !== 'localstorage') {
-      const loadFavorites = async () => {
-        try {
-          const response = await fetch('/api/favorites');
-          if (response.ok) {
-            const favoritesData = await response.json() as Record<string, Favorite>;
-            const favoritesArray = Object.entries(favoritesData).map(([key, favorite]) => ({
-              ...(favorite as Favorite),
-              key,
-            }));
-            // 按保存时间降序排列
-            const sortedFavorites = favoritesArray.sort((a, b) => b.save_time - a.save_time);
-            setFavorites(sortedFavorites);
-          }
-        } catch (error) {
-          console.error('加载收藏失败:', error);
-        }
-      };
-
-      loadFavorites();
-
-      // 监听收藏更新事件（修复删除收藏后页面不立即更新的问题）
-      const handleFavoritesUpdate = () => {
-        console.log('UserMenu: 收藏更新，重新加载收藏列表');
-        loadFavorites();
-      };
-
-      // 监听收藏更新事件
-      window.addEventListener('favoritesUpdated', handleFavoritesUpdate);
-
-      return () => {
-        window.removeEventListener('favoritesUpdated', handleFavoritesUpdate);
-      };
-    }
-  }, [authInfo, storageType]);
+    return () => {
+      window.removeEventListener('playRecordsUpdated', handlePlayRecordsUpdate);
+      window.removeEventListener('favoritesUpdated', handleFavoritesUpdate);
+      unsubscribeWatchingUpdates();
+    };
+  }, [dataQueryEnabled, invalidatePlayRecords, invalidateFavorites]);
 
   // 点击外部区域关闭下拉框
   useEffect(() => {
@@ -774,32 +706,19 @@ export const UserMenu: React.FC = () => {
 
     setPasswordLoading(true);
 
-    try {
-      const response = await fetch('/api/change-password', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          newPassword,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setPasswordError(data.error || '修改密码失败');
-        return;
-      }
-
-      // 修改成功，关闭弹窗并登出
-      setIsChangePasswordOpen(false);
-      await handleLogout();
-    } catch (error) {
-      setPasswordError('网络错误，请稍后重试');
-    } finally {
-      setPasswordLoading(false);
-    }
+    changePasswordMutation.mutate(newPassword, {
+      onSuccess: async () => {
+        // 修改成功，关闭弹窗并登出
+        setIsChangePasswordOpen(false);
+        await handleLogout();
+      },
+      onError: (error) => {
+        setPasswordError(error.message || '网络错误，请稍后重试');
+      },
+      onSettled: () => {
+        setPasswordLoading(false);
+      },
+    });
   };
 
   const handleSettings = () => {
@@ -925,6 +844,13 @@ export const UserMenu: React.FC = () => {
     setDownloadFormat(value);
     if (typeof window !== 'undefined') {
       localStorage.setItem('downloadFormat', value);
+    }
+  };
+
+  const handleExactSearchToggle = (value: boolean) => {
+    setExactSearch(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('exactSearch', String(value));
     }
   };
 
@@ -1187,6 +1113,34 @@ export const UserMenu: React.FC = () => {
             >
               <Users className='w-4 h-4 text-gray-500 dark:text-gray-400' />
               <span className='font-medium'>观影室</span>
+            </button>
+          )}
+
+          {/* 下载管理按钮 */}
+          {downloadEnabled && (
+            <button
+              onClick={() => {
+                setShowDownloadPanel(true);
+                handleCloseMenu();
+              }}
+              className='w-full px-3 py-2 text-left flex items-center gap-2.5 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-[background-color] duration-150 ease-in-out text-sm'
+            >
+              <Download className='w-4 h-4 text-gray-500 dark:text-gray-400' />
+              <span className='font-medium'>下载管理</span>
+              {tasks.filter(t => t.status === 'downloading').length > 0 && (
+                <span className='ml-auto flex items-center gap-1'>
+                  <span className='relative flex h-2 w-2'>
+                    <span className='animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75'></span>
+                    <span className='relative inline-flex rounded-full h-2 w-2 bg-green-500'></span>
+                  </span>
+                  <span className='text-xs text-green-600 dark:text-green-400'>
+                    {tasks.filter(t => t.status === 'downloading').length}
+                  </span>
+                </span>
+              )}
+              {tasks.length > 0 && tasks.filter(t => t.status === 'downloading').length === 0 && (
+                <span className='ml-auto text-xs text-gray-400'>{tasks.length}</span>
+              )}
             </button>
           )}
 
@@ -1579,6 +1533,30 @@ export const UserMenu: React.FC = () => {
                     className='sr-only peer'
                     checked={fluidSearch}
                     onChange={(e) => handleFluidSearchToggle(e.target.checked)}
+                  />
+                  <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
+                  <div className='absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5'></div>
+                </div>
+              </label>
+            </div>
+
+            {/* 精确搜索 */}
+            <div className='flex items-center justify-between'>
+              <div>
+                <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                  精确搜索
+                </h4>
+                <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                  开启后，搜索结果将过滤掉不包含搜索词的内容
+                </p>
+              </div>
+              <label className='flex items-center cursor-pointer'>
+                <div className='relative'>
+                  <input
+                    type='checkbox'
+                    className='sr-only peer'
+                    checked={exactSearch}
+                    onChange={(e) => handleExactSearchToggle(e.target.checked)}
                   />
                   <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
                   <div className='absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5'></div>
