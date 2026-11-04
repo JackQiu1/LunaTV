@@ -1,0 +1,173 @@
+# 部署位置：JackQiu1/LunaTV 仓库根目录 .github/workflows/sync-upstream.yml
+# 作用：每 30 分钟检查上游 SzeMeng76/LunaTV，有新提交即合并进本仓库；
+#       冲突时自动回滚、开 Issue 告警，绝不推送半成品。
+# 推送成功后 EdgeOne Pages / Vercel 会自动重新构建部署。
+
+name: sync-upstream
+
+on:
+  schedule:
+    # 每 30 分钟检查一次上游（GitHub 不支持跨仓库 push 触发，轮询是唯一不依赖第三方的方式）
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_OWNER: SzeMeng76
+  UPSTREAM_REPO: LunaTV
+  UPSTREAM_BRANCH: main
+  SYNC_LABEL: upstream-sync
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "lunatv-sync-bot"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Keepalive guard
+        run: |
+          LAST=$(git log -1 --format=%ct)
+          NOW=$(date +%s)
+          DAYS=$(( (NOW - LAST) / 86400 ))
+          echo "距最近一次提交：${DAYS} 天"
+          if [ "$DAYS" -lt 25 ]; then
+            echo "近期有提交，无需保活"
+            exit 0
+          fi
+          echo "仓库已空闲 ${DAYS} 天，写入保活标记以避免 GitHub 停用定时工作流"
+          mkdir -p .github
+          printf 'last-keepalive: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .github/sync-heartbeat
+          git add .github/sync-heartbeat
+          git commit -m "chore: keepalive to prevent scheduled workflow disable"
+          git push origin HEAD:main
+
+      - name: Merge upstream
+        id: merge
+        run: |
+          set -uo pipefail
+          git remote add upstream "https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}.git"
+          git fetch --no-tags --tags upstream "${UPSTREAM_BRANCH}"
+          SHA=$(git rev-parse --short "upstream/${UPSTREAM_BRANCH}")
+          BEHIND=$(git rev-list --count "HEAD..upstream/${UPSTREAM_BRANCH}")
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "已是最新（$SHA），无需合并"
+            echo "result=uptodate" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "落后 $BEHIND 个提交，开始合并 $SHA"
+          if git merge --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            echo "result=merged" >> "$GITHUB_OUTPUT"
+          else
+            echo "检测到合并冲突，回滚本次合并"
+            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt" || true
+            git merge --abort || true
+            echo "result=conflict" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Push merged result
+        if: steps.merge.outputs.result == 'merged'
+        run: |
+          git push origin HEAD:main
+          git push origin --tags
+
+      - name: Close stale alert
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NUM=$(gh issue list --state open --label "$SYNC_LABEL" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ -n "$NUM" ]; then
+            gh issue close "$NUM" --comment "上游已重新同步成功（${{ steps.merge.outputs.sha }}），自动关闭。"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### 上游同步"
+            echo "| 项目 | 值 |"
+            echo "|---|---|"
+            echo "| 上游提交 | \`${{ steps.merge.outputs.sha }}\` |"
+            echo "| 落后提交数 | ${{ steps.merge.outputs.behind }} |"
+            echo "| 结果 | ${{ steps.merge.outputs.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          TITLE="[上游同步] 合并冲突，需要人工处理"
+          BODY="$RUNNER_TEMP/issue.md"
+
+          HAS_ISSUES=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.has_issues' 2>/dev/null || echo false)
+          if [ "$HAS_ISSUES" != "true" ]; then
+            {
+              echo "### 上游同步失败：合并冲突"
+              echo ""
+              echo "仓库未启用 Issues，无法自动创建告警单。请到 Settings → General → Features 勾选 **Issues** 后重跑。"
+              echo ""
+              echo '```'
+              cat "$RUNNER_TEMP/conflicts.txt" 2>/dev/null || echo "(未能获取冲突文件列表)"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## 上游同步失败"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "|---|---|"
+            echo "| 上游仓库 | ${UPSTREAM_OWNER}/${UPSTREAM_REPO} |"
+            echo "| 上游提交 | \`${{ steps.merge.outputs.sha }}\` |"
+            echo "| 落后提交数 | ${{ steps.merge.outputs.behind }} |"
+            echo "| 运行记录 | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |"
+            echo ""
+            echo "### 冲突文件"
+            echo ""
+            echo '```'
+            cat "$RUNNER_TEMP/conflicts.txt" 2>/dev/null || echo "(未能获取，请查看运行日志)"
+            echo '```'
+            echo ""
+            echo "### 处理方式"
+            echo ""
+            echo '```bash'
+            echo "git remote add upstream https://github.com/${UPSTREAM_OWNER}/${UPSTREAM_REPO}.git"
+            echo "git fetch upstream ${UPSTREAM_BRANCH}"
+            echo "git merge upstream/${UPSTREAM_BRANCH}"
+            echo '```'
+            echo ""
+            echo "> 本次未推送任何内容，线上版本保持原样。"
+          } > "$BODY"
+
+          gh label create "$SYNC_LABEL" --color B60205 --description "上游同步失败，需人工处理" --force >/dev/null 2>&1 || true
+          NUM=$(gh issue list --state open --label "$SYNC_LABEL" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null || true)
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body-file "$BODY"
+          else
+            gh issue create --title "$TITLE" --body-file "$BODY" --label "$SYNC_LABEL"
+          fi
